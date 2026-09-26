@@ -1,0 +1,842 @@
+# Continue the Spatial Viewer Implementation
+
+This is a **continuation of the previous spatial viewer task**.
+
+Do NOT start the project from scratch.
+
+You have already inspected/modified the existing Django application and there is already a `/spatial/` subpage and some initial spatial-viewer implementation.
+
+The goal of this prompt is to continue from the **current state of the repository** and move the implementation toward a genuinely working spatial transcriptomics viewer.
+
+---
+
+## 1. Start by inspecting the current state
+
+Before making changes, inspect what has been implemented so far.
+
+Specifically check:
+
+```text
+/spatial/
+```
+
+and all files currently associated with it.
+
+Review:
+
+* Django URL configuration
+* spatial view
+* spatial template
+* spatial JavaScript
+* spatial CSS
+* spatial APIs
+* dataset-loading code
+* any spatial models
+* any demo-data code
+* dependencies that were added
+* Docker/development configuration.
+
+Do NOT recreate anything that already exists.
+
+Instead determine:
+
+```text
+What is already working?
+What is partially implemented?
+What is broken?
+What was only scaffolded?
+What is missing?
+```
+
+---
+
+# 2. First priority: get the current `/spatial/` page working
+
+The existing page is currently not fully functional.
+
+Debug the implementation rather than replacing it wholesale.
+
+Check both:
+
+### Backend
+
+```text
+Django routing
+views
+API endpoints
+dataset loading
+file paths
+imports
+dependencies
+```
+
+### Frontend
+
+```text
+JavaScript console errors
+failed API requests
+404 static files
+incorrect DOM selectors
+template variables
+rendering problems
+```
+
+Run:
+
+```bash
+python manage.py check
+```
+
+and the existing test suite.
+
+If possible, actually open/test:
+
+```text
+/spatial/
+```
+
+and inspect browser/network errors.
+
+---
+
+# 3. Use a REAL demo spatial dataset
+
+For the next stage, do not rely solely on the previously created random synthetic `StereoExpData`.
+
+Use the **SpatialData ecosystem's small mouse-liver spatial transcriptomics demo dataset** as the main development dataset.
+
+The official example is documented here:
+
+```text
+https://spatialdata.scverse.org/en/latest/tutorials/notebooks/notebooks/examples/intro.html
+```
+
+The demo is useful because it contains multiple spatial data types, including concepts such as:
+
+```text
+image
+segmentation
+transcript points
+cell/nucleus boundaries
+AnnData expression data
+spatial coordinates
+metadata
+```
+
+Use it specifically because our viewer needs to handle multiple spatial layers rather than only a count matrix.
+
+---
+
+# 4. Important: do not redesign the architecture
+
+Continue using the architecture established in the previous implementation.
+
+The intended separation is:
+
+```text
+                    Django Application
+                           |
+                        /spatial/
+                           |
+                      Spatial API
+                           |
+                Spatial Dataset Reader
+                           |
+                  +--------+--------+
+                  |                 |
+             SpatialData          GEF
+               Reader            Reader
+                  |
+                  v
+             Demo Dataset
+```
+
+The browser should communicate with the Django API.
+
+The browser should NOT directly open GEF/H5AD/SpatialData files.
+
+---
+
+# 5. Implement or finish the SpatialDatasetReader
+
+If the previous implementation already contains a reader abstraction, improve and complete it.
+
+If it does not, create one.
+
+The abstraction should conceptually provide:
+
+```python
+class SpatialDatasetReader:
+
+    def metadata(self):
+        ...
+
+    def image(self):
+        ...
+
+    def coordinates(self, ...):
+        ...
+
+    def expression(self, gene, ...):
+        ...
+
+    def cells(self, ...):
+        ...
+
+    def mask(self, ...):
+        ...
+
+    def clusters(self, ...):
+        ...
+
+    def umap(self, ...):
+        ...
+```
+
+Do not force every dataset type to implement every method.
+
+Optional capabilities are expected.
+
+For example:
+
+```text
+Dataset A:
+image ✓
+mask ✓
+expression ✓
+clusters ✗
+umap ✗
+
+Dataset B:
+image ✓
+mask ✓
+expression ✓
+clusters ✓
+umap ✓
+```
+
+The viewer should discover available capabilities from dataset metadata.
+
+---
+
+# 6. Make the demo dataset load through the backend
+
+Do not hardcode the demo data directly into JavaScript.
+
+The flow should be:
+
+```text
+SpatialData demo
+      ↓
+SpatialDatasetReader
+      ↓
+Django API
+      ↓
+Browser
+      ↓
+Spatial Viewer
+```
+
+Create a dataset identifier such as:
+
+```text
+mouse_liver_demo
+```
+
+or whatever naming convention already exists in the project.
+
+The frontend should request the dataset through the API.
+
+---
+
+# 7. Dataset metadata endpoint
+
+Make sure an endpoint similar to:
+
+```text
+/api/spatial/<dataset_id>/metadata/
+```
+
+works.
+
+It should tell the frontend what the dataset contains.
+
+For example:
+
+```json
+{
+    "id": "mouse_liver_demo",
+    "name": "Mouse Liver SpatialData Demo",
+    "species": "Mouse",
+    "technology": "Spatial Transcriptomics",
+    "layers": {
+        "image": true,
+        "mask": true,
+        "transcripts": true,
+        "boundaries": true,
+        "expression": true,
+        "clusters": false,
+        "umap": false
+    }
+}
+```
+
+Adapt the exact structure to the existing implementation.
+
+The important point is:
+
+> The frontend should not hardcode which layers exist.
+
+---
+
+# 8. Make the spatial canvas actually work
+
+The `/spatial/` page should now display a real spatial dataset.
+
+At minimum:
+
+```text
+image
++
+spatial coordinates
++
+mask/segmentation
+```
+
+The user should be able to:
+
+```text
+zoom
+pan
+reset
+fit to data
+toggle layers
+change opacity
+```
+
+Do not create thousands of individual HTML elements.
+
+For the small demo, SVG or Canvas is acceptable.
+
+Keep the rendering code modular so that it can later be replaced/optimized with Canvas/WebGL for large Stereo-seq datasets.
+
+---
+
+# 9. Implement the layer panel
+
+The viewer should have a functional layer panel similar to:
+
+```text
+LAYERS
+
+[x] Tissue Image
+[ ] Tissue Mask
+[ ] Cell Boundaries
+[ ] Transcripts
+[ ] Gene Expression
+[ ] Clusters
+[ ] UMAP
+```
+
+Only show/enable layers that are actually available.
+
+For unavailable layers, either:
+
+```text
+hide them
+```
+
+or:
+
+```text
+show them disabled with a clear explanation
+```
+
+Do not create fake controls.
+
+---
+
+# 10. Implement gene search next
+
+Once the image and spatial layers work, make gene expression functional.
+
+The UI should contain:
+
+```text
+Gene
+[ Search gene... ]
+```
+
+The gene list should come from the actual dataset.
+
+Do not hardcode fake genes.
+
+When a user selects a gene:
+
+```text
+Gene expression
+       ↓
+Django API
+       ↓
+expression values + spatial coordinates
+       ↓
+spatial canvas
+```
+
+---
+
+# 11. Gene-expression API
+
+Finish or implement an endpoint similar to:
+
+```text
+/api/spatial/<dataset_id>/expression/?gene=<gene>
+```
+
+The response should contain only what is necessary for visualization.
+
+Do NOT return:
+
+```text
+entire expression matrix
+```
+
+for a single gene request.
+
+For example:
+
+```json
+{
+    "gene": "GENE_NAME",
+    "points": [
+        {
+            "id": "cell_001",
+            "x": 123.4,
+            "y": 456.7,
+            "value": 4.2
+        }
+    ]
+}
+```
+
+Adapt this to the actual dataset structure.
+
+---
+
+# 12. Expression visualization
+
+When a gene is selected, the viewer should switch to a spatial expression view.
+
+Include:
+
+```text
+expression color scale
+legend
+minimum/maximum
+opacity
+```
+
+The user should be able to visually identify regions of higher/lower expression.
+
+Do not perform undocumented biological normalization.
+
+If using:
+
+```text
+raw
+log1p
+normalized
+```
+
+make the chosen transformation explicit in the UI/code.
+
+---
+
+# 13. Cell selection
+
+If the demo contains cell IDs or segmentation labels, clicking a spatial cell should show an information panel.
+
+For example:
+
+```text
+Cell ID
+X
+Y
+Cluster
+Genes detected
+Total counts
+Other available metadata
+```
+
+Only show fields actually present in the data.
+
+Do not invent cell types or annotations.
+
+---
+
+# 14. Add a basic UMAP/cluster architecture
+
+After the core spatial visualization works, inspect the demo dataset to determine whether cluster and UMAP information already exists.
+
+If it does:
+
+```text
+use it
+```
+
+If it does not:
+
+For development purposes, it is acceptable to generate:
+
+```text
+demo clusters
+demo UMAP
+```
+
+from the expression matrix.
+
+But label them explicitly as:
+
+```text
+Demo analysis
+```
+
+or:
+
+```text
+Generated for demonstration
+```
+
+They must not be presented as published biological results.
+
+---
+
+# 15. Keep clustering and UMAP separate
+
+Do not treat UMAP as clustering.
+
+The viewer should have separate concepts:
+
+```text
+Clusters
+```
+
+and:
+
+```text
+UMAP
+```
+
+A dataset may contain:
+
+```text
+clusters only
+UMAP only
+both
+neither
+```
+
+The UI should handle all four cases.
+
+---
+
+# 16. Prepare linked spatial ↔ UMAP selection
+
+Make sure every displayed cell/bin has a stable identifier.
+
+For example:
+
+```text
+cell_id
+```
+
+Then design the viewer so that eventually:
+
+```text
+click UMAP point
+       ↓
+identify cell
+       ↓
+highlight spatial cell
+```
+
+and:
+
+```text
+click spatial cell
+       ↓
+identify cell
+       ↓
+highlight UMAP point
+```
+
+If full bidirectional selection is too much for this step, implement the data structures and one direction first.
+
+---
+
+# 17. Do not implement GEF yet unless necessary
+
+The eventual target is real Stereo-seq/SAW data.
+
+We will eventually need something like:
+
+```text
+GEFReader
+```
+
+for files such as:
+
+```text
+*.gef
+*.raw.gef
+*.tissue.gef
+```
+
+But do NOT let GEF support block the current demo.
+
+First make:
+
+```text
+SpatialData demo
+       ↓
+Django
+       ↓
+Viewer
+```
+
+work.
+
+Then add:
+
+```text
+GEF
+       ↓
+GEFReader
+       ↓
+same viewer
+```
+
+The frontend should not need to know whether the data came from SpatialData or GEF.
+
+---
+
+# 18. Investigate spatialdata-io
+
+As part of this stage, check whether:
+
+```text
+spatialdata-io
+```
+
+is useful for future Stereo-seq support.
+
+It provides readers for multiple spatial transcriptomics technologies, including Stereo-seq.
+
+However:
+
+* verify the currently supported versions,
+* do not assume every GEF/SAW version works,
+* do not force it into the application if it creates dependency problems.
+
+For now, use the SpatialData demo primarily as a reliable development dataset.
+
+---
+
+# 19. Keep large data outside MySQL
+
+Do not put the full expression matrix into the existing relational database.
+
+The architecture should remain:
+
+```text
+MySQL
+  |
+  +-- dataset metadata
+  +-- provenance
+  +-- file references
+  +-- analysis metadata
+
+Files/Object Storage
+  |
+  +-- image
+  +-- GEF
+  +-- H5AD
+  +-- masks
+  +-- spatial coordinates
+  +-- analysis results
+```
+
+The API should read/query the underlying spatial dataset.
+
+---
+
+# 20. Keep performance in mind
+
+The current demo is small.
+
+The eventual Stereo-seq datasets may contain:
+
+```text
+100,000+
+1,000,000+
+10,000,000+
+```
+
+spatial bins.
+
+Therefore do not build the viewer around:
+
+```text
+one DOM element per point
+```
+
+or:
+
+```text
+send entire matrix to browser
+```
+
+The architecture should eventually support:
+
+```text
+viewport filtering
+lazy loading
+chunking
+downsampling
+caching
+LOD
+Canvas/WebGL
+tiled images
+```
+
+For now, implement only what is necessary for the demo, but keep these requirements in mind.
+
+---
+
+# 21. Preserve the existing Django application
+
+Do not:
+
+* create another Django project,
+* replace the existing database,
+* remove existing routes,
+* remove the provenance graph,
+* rewrite unrelated parts of the application,
+* introduce unnecessary frontend frameworks.
+
+The spatial viewer is a new capability inside the existing application.
+
+---
+
+# 22. Verify after every major change
+
+After fixing the current page and after implementing the demo reader, run:
+
+```bash
+python manage.py check
+```
+
+Then run the existing tests.
+
+Also verify:
+
+```text
+/spatial/
+```
+
+in the browser.
+
+Check browser console and network requests.
+
+Do not consider the implementation complete simply because Django starts successfully.
+
+---
+
+# 23. Current milestone
+
+For this continuation, focus on reaching this exact state:
+
+```text
+Existing Django Application
+          |
+          v
+       /spatial/
+          |
+          v
+Mouse Liver SpatialData Demo
+          |
+          v
+Interactive spatial viewer
+          |
+     +----+----+
+     |         |
+   Image      Mask
+     |
+     v
+Spatial cells/points
+     |
+     v
+Gene search
+     |
+     v
+Gene expression
+     |
+     v
+Cell selection
+```
+
+Once this works, we will continue with:
+
+```text
+Clusters
+   ↓
+UMAP
+   ↓
+Spatial ↔ UMAP linking
+   ↓
+GEF/Stereo-seq
+   ↓
+large-scale optimization
+```
+
+---
+
+# 24. What I want from you now
+
+Do not start by generating a large amount of new code.
+
+First inspect the **current repository state resulting from the previous prompt**.
+
+Then report briefly:
+
+```text
+CURRENT STATE
+-------------
+/spatial/ route:
+Current implementation:
+What works:
+What is broken:
+
+DEMO DATA
+---------
+SpatialData installed:
+Demo dataset available:
+Current reader:
+
+NEXT CHANGES
+------------
+1.
+2.
+3.
+4.
+```
+
+Then make the smallest necessary changes to get the existing `/spatial/` page working with the real SpatialData demo.
+
+The priority is:
+
+> **Continue the existing implementation, fix what is broken, and produce the first genuinely working spatial transcriptomics viewer.**
+
+Do not restart the project.
+Do not throw away the existing `/spatial/` work.
+Do not build the complete final viewer yet.

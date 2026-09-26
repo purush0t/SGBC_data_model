@@ -1,0 +1,1252 @@
+# Task: Integrate a Scalable Spatial Transcriptomics Viewer into the Existing Django Application
+
+You are an expert full-stack Django engineer and scientific-visualization developer working **inside an existing GitHub Codespaces repository**.
+
+Your task is to extend the existing Django application with a **scalable, interactive spatial transcriptomics data viewer** inspired by the functionality and general interaction patterns of STOmics and HESTA.
+
+## Non-negotiable constraints
+
+* **Do not create a second Django project.**
+* **Do not replace the existing architecture.**
+* **Do not break existing routes, APIs, tests, provenance functionality, Docker configuration, or database behavior.**
+* **Do not make destructive changes.**
+* **Do not fabricate biological data or annotations.**
+* **Do not load large expression matrices into MySQL or the browser unnecessarily.**
+* **Do not render millions of spatial points as individual DOM elements.**
+* **Do not hardcode dataset-specific filesystem paths or frontend dataset definitions.**
+* **Reuse existing dependencies and architectural patterns whenever practical.**
+* **Do not add a dependency until you have inspected the repository and determined that it is necessary.**
+
+---
+
+# PHASE 0 — Repository Discovery
+
+**Before modifying any file, inspect the repository.**
+
+Read and understand, at minimum:
+
+```text
+README.md
+data_model.md
+manage.py
+datamodel_demo/settings.py
+datamodel_demo/urls.py
+app1/models.py
+app1/views.py
+app1/utils.py
+existing templates
+existing JavaScript/CSS
+compose.yaml
+Dockerfile
+migrations
+existing API endpoints
+existing tests
+dependency files
+```
+
+Also inspect the actual repository structure and identify any additional files that are architecturally relevant.
+
+Determine:
+
+1. Django version
+2. Python version
+3. database configuration
+4. frontend architecture
+5. JavaScript dependencies
+6. existing visualization libraries
+7. static-file configuration
+8. template structure
+9. API conventions
+10. test infrastructure
+11. Docker/Codespaces workflow
+12. existing provenance/data-model architecture
+13. whether a frontend build system exists
+14. whether large-file/object-storage abstractions already exist.
+
+The existing application currently uses Django, MySQL, Docker Compose, and D3.js for the provenance graph.
+
+Existing important routes include:
+
+```text
+/admin/
+/admin/activity-timelines/
+/graph/
+/api/graph/
+```
+
+These routes and their existing behavior must remain functional.
+
+---
+
+# PHASE 0 OUTPUT — Implementation Plan
+
+After inspecting the repository, **stop before making implementation changes** and provide a concise implementation plan based on what you actually found.
+
+The plan must contain:
+
+```text
+1. Existing architecture discovered
+2. Existing frontend stack
+3. Existing backend/API stack
+4. Relevant existing data model
+5. Existing provenance integration points
+6. Files to modify
+7. Files to create
+8. Dependencies required, if any
+9. Proposed spatial API
+10. Proposed frontend architecture
+11. Proposed data representation
+12. Performance strategy
+13. Testing strategy
+14. Implementation phases
+15. Risks or architectural uncertainties
+```
+
+Do not invent technologies, files, models, or dependencies before inspection.
+
+If the existing architecture provides a better integration point than the design below, use the existing architecture and explain the deviation briefly.
+
+**After presenting the plan, proceed with implementation unless an architectural decision genuinely requires clarification.**
+
+---
+
+# 1. Product Goal
+
+Add a new spatial transcriptomics viewer integrated into the existing Django application.
+
+A suitable URL structure might be:
+
+```text
+/spatial/
+/spatial/<dataset_id>/
+
+/api/spatial/
+/api/spatial/<dataset_id>/...
+```
+
+However, **follow the repository's existing URL/API conventions rather than blindly using these paths.**
+
+The viewer should allow researchers to explore:
+
+* tissue images
+* tissue masks
+* cell segmentation
+* spatial coordinates
+* genes
+* gene expression
+* clusters
+* UMAP
+* cell/bin metadata
+* spatial annotations
+* multiple visualization layers.
+
+The result should feel like a scientific data-exploration application, not a Django CRUD/admin page.
+
+---
+
+# 2. Reference Design
+
+Use the supplied HESTA and STOmics-style references as **functional and visual inspiration only**.
+
+Recreate general concepts such as:
+
+* large interactive spatial canvas
+* layer controls
+* tissue/image visualization
+* gene-expression visualization
+* clustering
+* UMAP
+* metadata panels
+* scientific legends and controls.
+
+Do **not** copy branding, proprietary assets, exact UI implementation, or proprietary code.
+
+The spatial visualization should dominate the screen.
+
+---
+
+# 3. Initial End-to-End Vertical Slice
+
+Do not attempt to build every feature simultaneously.
+
+First implement the smallest complete workflow:
+
+```text
+Synthetic dataset
+      ↓
+Django dataset abstraction
+      ↓
+Django API
+      ↓
+Spatial viewer
+      ↓
+Interactive canvas
+      ↓
+Gene search
+      ↓
+Spatial gene-expression visualization
+```
+
+This vertical slice must work end-to-end before expanding the viewer.
+
+Then incrementally add:
+
+```text
+clusters
+UMAP
+tissue mask
+cell segmentation
+large-image support
+real spatial-data readers
+```
+
+After each major phase:
+
+1. run tests,
+2. run Django checks,
+3. verify the application,
+4. inspect for regressions,
+5. report what changed and what remains.
+
+---
+
+# 4. Spatial Viewer UI
+
+Use the following as a conceptual starting point, not a rigid design:
+
+```text
++-----------------------------------------------------------------------+
+|                         Spatial Viewer                                |
++-----------------------------------------------------------------------+
+| Dataset | Sample | Tissue | Resolution | Search | Settings           |
++----------------------+-----------------------------------------------+
+|                      |                                               |
+|    LAYER PANEL       |              SPATIAL CANVAS                    |
+|                      |                                               |
+| [x] Tissue Image     |        Zoomable spatial visualization         |
+| [ ] Tissue Mask      |                                               |
+| [ ] Cell Mask        |        Coordinates / bins / cells              |
+| [ ] Gene Expression  |                                               |
+| [ ] Clusters         |                                               |
+| [ ] Boundaries       |                                               |
+|                      |                                               |
+| -------------------- |                                               |
+| Gene                 |                                               |
+| [ Search Gene ... ]   |                                               |
+|                      |                                               |
+| Visualization        |                                               |
+| ○ Expression         |                                               |
+| ○ Cluster            |                                               |
+| ○ Cell Type          |                                               |
++----------------------+-----------------------------------------------+
+|                         ANALYSIS / INFORMATION                       |
++-----------------------------------------------------------------------+
+| Expression | Cluster information | UMAP | Metadata | Statistics      |
++-----------------------------------------------------------------------+
+```
+
+Improve this after inspecting the repository and reference assets.
+
+Use:
+
+* compact scientific controls
+* collapsible panels where appropriate
+* clear legends
+* tooltips
+* responsive layout
+* visualization-friendly colors
+* clear loading/error/empty states.
+
+---
+
+# 5. Spatial Canvas
+
+The spatial canvas is the primary component.
+
+It must support:
+
+* pan
+* zoom
+* reset
+* fit-to-view
+* coordinate display
+* hover
+* click
+* selection
+* layer visibility
+* opacity
+* color scales
+* legends.
+
+The implementation must scale beyond toy datasets.
+
+Before selecting a rendering library, inspect existing dependencies and evaluate appropriate technologies such as:
+
+```text
+Canvas
+WebGL
+D3
+OpenSeadragon
+deck.gl
+PixiJS
+Plotly
+```
+
+Choose the smallest appropriate technology for the actual requirements.
+
+Do not add multiple visualization libraries unnecessarily.
+
+For large point datasets, prefer Canvas/WebGL/GPU rendering over thousands or millions of DOM nodes.
+
+---
+
+# 6. Layer Architecture
+
+Implement a dynamic layer system.
+
+At minimum support these conceptual layers:
+
+```text
+Tissue Image
+Tissue Mask
+Cell Mask / Boundaries
+Spatial Bins / Spots
+Gene Expression
+Clusters
+Cell Types
+Additional Annotations
+```
+
+Each layer should have state equivalent to:
+
+```javascript
+{
+    id,
+    name,
+    visible,
+    opacity,
+    zIndex,
+    colorConfig,
+    dataSource
+}
+```
+
+The frontend must **not hardcode the dataset's available layers**.
+
+The backend should provide dataset metadata describing which layers actually exist.
+
+Missing layers must produce a clear UI state rather than an empty or broken visualization.
+
+---
+
+# 7. Dataset Architecture
+
+First inspect the existing Entity/Activity architecture.
+
+The current application distinguishes concepts such as:
+
+```text
+Entity
+Activity
+EntityInformationRecord
+ActivityInformationRecord
+ExternalReference
+EntityRelation
+parameters
+provenance
+```
+
+Integrate spatial datasets into this architecture where appropriate.
+
+A conceptual structure is:
+
+```text
+Tissue Section
+      |
+      v
+Spatial Processing Activity
+      |
+      v
+Spatial Dataset
+      |
+      +-- image
+      +-- tissue mask
+      +-- cell segmentation
+      +-- expression
+      +-- coordinates
+      +-- clusters
+      +-- UMAP
+```
+
+Do not duplicate existing provenance concepts unnecessarily.
+
+If a new database model is needed:
+
+1. explain why,
+2. keep it minimal,
+3. integrate it with the existing provenance model,
+4. add migrations and tests.
+
+Prefer metadata/file references in MySQL over storing huge scientific matrices directly in the relational database.
+
+---
+
+# 8. Spatial Dataset Abstraction
+
+Create a clean abstraction for spatial datasets.
+
+For example:
+
+```python
+class SpatialDatasetReader:
+    def get_metadata(self):
+        ...
+
+    def get_coordinates(self, **filters):
+        ...
+
+    def get_expression(self, gene, **filters):
+        ...
+
+    def get_clusters(self, **filters):
+        ...
+
+    def get_cells(self, **filters):
+        ...
+
+    def get_umap(self, **filters):
+        ...
+```
+
+Use the repository's conventions if an equivalent abstraction already exists.
+
+The abstraction should allow future support for:
+
+```text
+GEF
+H5AD
+spatial coordinate tables
+TIFF/PNG images
+segmentation masks
+cluster results
+UMAP results
+```
+
+Do not force every format into one implementation.
+
+---
+
+# 9. Dataset Registration
+
+Do not scatter file paths throughout views.
+
+Use a registered dataset representation containing appropriate metadata, potentially including:
+
+```text
+dataset_id
+name
+species
+platform
+technology
+resolution
+expression reference
+image reference
+tissue-mask reference
+cell-mask reference
+cluster reference
+UMAP reference
+coordinate-system configuration
+provenance reference
+```
+
+The exact schema must be based on the existing application's architecture.
+
+A representative metadata response could look like:
+
+```json
+{
+  "id": "sample_001",
+  "name": "Mouse Brain",
+  "species": "Mus musculus",
+  "platform": "Stereo-seq",
+  "technology": "Spatial Transcriptomics",
+  "resolution": "Bin50",
+  "width": 10000,
+  "height": 8000,
+  "n_bins": 150000,
+  "n_genes": 25000,
+  "layers": [
+    "image",
+    "tissue_mask",
+    "cell_mask",
+    "expression",
+    "clusters",
+    "umap"
+  ]
+}
+```
+
+Treat this as an example, not a fixed schema.
+
+---
+
+# 10. Large Scientific Data
+
+The architecture must support datasets containing approximately:
+
+```text
+100,000+
+1,000,000+
+10,000,000+
+```
+
+spatial bins/points.
+
+Never send a complete large expression matrix to the browser.
+
+Never implement an endpoint equivalent to:
+
+```python
+return JsonResponse(entire_expression_matrix)
+```
+
+Instead use targeted requests.
+
+For example:
+
+```text
+GET /api/spatial/<dataset_id>/metadata/
+GET /api/spatial/<dataset_id>/layers/
+GET /api/spatial/<dataset_id>/coordinates/
+GET /api/spatial/<dataset_id>/expression/?gene=TP53
+GET /api/spatial/<dataset_id>/clusters/
+GET /api/spatial/<dataset_id>/umap/
+GET /api/spatial/<dataset_id>/cells/
+```
+
+Prefer viewport-aware filtering:
+
+```text
+?xmin=...
+&xmax=...
+&ymin=...
+&ymax=...
+```
+
+For example:
+
+```text
+/api/spatial/<dataset_id>/expression/?gene=TP53&xmin=...&xmax=...&ymin=...&ymax=...
+```
+
+Also consider:
+
+* downsampling
+* server-side filtering
+* pagination
+* caching
+* compressed responses
+* lazy loading
+* multi-resolution data.
+
+The API must protect itself against unreasonably large requests.
+
+---
+
+# 11. Synthetic Demo Dataset
+
+Create a small, clearly labeled:
+
+```text
+Synthetic Demo Dataset
+```
+
+for development and testing.
+
+It should be structured rather than purely random.
+
+For example:
+
+```text
+~100 spatial bins/cells
+~50 genes
+Region A
+Region B
+Region C
+```
+
+with intentionally different expression patterns:
+
+```text
+Gene_0 → high in left region
+Gene_1 → high in right region
+Gene_2 → high in center
+```
+
+Generate, where practical:
+
+* spatial coordinates
+* expression matrix
+* clusters
+* UMAP coordinates
+* tissue mask
+* cell boundaries.
+
+The synthetic dataset must exercise the actual viewer pipeline rather than bypassing it with frontend-only mock data.
+
+Clearly identify it as synthetic and never present synthetic annotations as biological observations.
+
+---
+
+# 12. Gene Expression
+
+The user should be able to search for a gene:
+
+```text
+Search gene: [ TP53 ]
+```
+
+and visualize its spatial expression.
+
+The visualization should support:
+
+* expression value
+* spatial coordinates
+* color scale
+* legend
+* configurable opacity
+* point/bin size
+* optional clipping
+* documented transformation.
+
+Potential controls:
+
+```text
+Scale:
+○ Raw
+○ Log1p
+○ Normalized
+
+Opacity:
+Low ---------------- High
+
+Point size:
+Small -------------- Large
+```
+
+Do not silently claim a normalization method has biological validity.
+
+If the dataset already provides normalized values, preserve their semantics and clearly label them.
+
+---
+
+# 13. Cluster Visualization
+
+If clustering data exists, support:
+
+* cluster layer
+* cluster legend
+* cluster visibility
+* cluster selection
+* cluster metadata
+* spatial highlighting.
+
+If no clustering result exists, display:
+
+```text
+No clustering result is available for this dataset.
+```
+
+Never fabricate clusters for real data.
+
+---
+
+# 14. UMAP
+
+Add a UMAP panel supporting:
+
+* pan
+* zoom
+* hover
+* click
+* cluster coloring
+* point selection
+* spatial/UMAP linked selection.
+
+Required interaction:
+
+```text
+UMAP selection
+      ↓
+corresponding spatial location highlighted
+```
+
+and:
+
+```text
+Spatial selection
+      ↓
+corresponding UMAP point highlighted
+```
+
+Use stable IDs to synchronize selections rather than relying on array position.
+
+---
+
+# 15. Cell Segmentation
+
+If segmentation data exists, support fields such as:
+
+```text
+cell_id
+x
+y
+polygon
+centroid
+area
+```
+
+Render boundaries as an overlay.
+
+Clicking a cell should display only metadata actually available, for example:
+
+```text
+Cell ID
+Cell type
+Cluster
+X
+Y
+Genes detected
+Total counts
+Other metadata
+```
+
+Do not assume these fields exist.
+
+The backend should expose available metadata fields.
+
+---
+
+# 16. Tissue Masks and Images
+
+Support tissue masks represented by formats appropriate to the dataset, potentially:
+
+```text
+PNG
+TIFF
+binary raster
+polygon
+```
+
+For large microscopy images, evaluate tiled/multi-resolution rendering.
+
+If OpenSeadragon or an existing repository component is appropriate, reuse it.
+
+Do not load unnecessarily huge full-resolution images into browser memory.
+
+---
+
+# 17. Coordinate Systems
+
+Explicitly distinguish:
+
+```text
+image coordinates
+spatial coordinates
+bin coordinates
+cell coordinates
+```
+
+Do not assume their origins or Y-axis directions match.
+
+Where necessary implement a transformation abstraction supporting:
+
+```text
+scale
+translation
+rotation
+flip
+origin
+coordinate-system metadata
+```
+
+Make transformations dataset-specific and configurable.
+
+---
+
+# 18. API Design
+
+Follow existing Django API conventions.
+
+A possible API structure:
+
+```text
+/api/spatial/
+/api/spatial/<dataset_id>/
+/api/spatial/<dataset_id>/metadata/
+/api/spatial/<dataset_id>/layers/
+/api/spatial/<dataset_id>/coordinates/
+/api/spatial/<dataset_id>/expression/
+/api/spatial/<dataset_id>/clusters/
+/api/spatial/<dataset_id>/umap/
+/api/spatial/<dataset_id>/cells/
+```
+
+Do not introduce Django REST Framework if the existing project does not need it and standard Django JSON responses are sufficient.
+
+Validate:
+
+* dataset IDs
+* gene names
+* bounding boxes
+* request sizes
+* file references.
+
+Never expose arbitrary filesystem access.
+
+---
+
+# 19. Frontend Architecture
+
+Create a dedicated spatial frontend using the existing project's conventions.
+
+A possible modular structure is:
+
+```text
+static/
+  spatial/
+    spatial-viewer.js
+    spatial-canvas.js
+    spatial-api.js
+    spatial-layers.js
+    spatial-gene.js
+    spatial-clusters.js
+    spatial-umap.js
+    spatial-selection.js
+    spatial-state.js
+    spatial.css
+```
+
+Adapt this structure if the repository uses a different frontend organization.
+
+Avoid one monolithic JavaScript file.
+
+Separate:
+
+```text
+state
+API communication
+rendering
+interaction
+layer management
+selection synchronization
+```
+
+---
+
+# 20. Viewer State
+
+Maintain centralized state.
+
+For example:
+
+```javascript
+const viewerState = {
+    dataset: null,
+
+    viewport: {
+        x: 0,
+        y: 0,
+        zoom: 1
+    },
+
+    layers: {},
+
+    selectedGene: null,
+
+    selectedCluster: null,
+
+    selectedCells: [],
+
+    expression: {
+        scale: "log1p",
+        min: null,
+        max: null
+    }
+};
+```
+
+Do not allow unrelated components to maintain conflicting copies of core viewer state.
+
+---
+
+# 21. Performance Strategy
+
+Design around large datasets from the beginning.
+
+Use appropriate combinations of:
+
+```text
+viewport loading
+server-side filtering
+downsampling
+Canvas/WebGL
+tiled images
+lazy loading
+caching
+compressed API responses
+multi-resolution rendering
+```
+
+The browser must not create one HTML element per spatial bin for large datasets.
+
+If a design choice is made specifically for performance, document the reason.
+
+---
+
+# 22. Provenance Integration
+
+Integrate spatial datasets into the existing provenance system.
+
+Conceptually:
+
+```text
+Tissue Section
+      |
+      v
+Spatial Transcriptomics Processing
+      |
+      v
+Spatial Dataset
+      |
+      +-- image
+      +-- expression
+      +-- segmentation
+      +-- clustering
+```
+
+Where appropriate, provide a link from the spatial viewer back to the relevant provenance graph:
+
+```text
+/graph/
+```
+
+Do not bypass the existing:
+
+```text
+Entity → Activity → Entity
+```
+
+relationship model.
+
+---
+
+# 23. Testing
+
+Add backend tests for:
+
+```text
+dataset registration
+metadata endpoint
+layer endpoint
+coordinate filtering
+gene expression endpoint
+cluster endpoint
+UMAP endpoint
+invalid dataset
+invalid gene
+invalid bounding box
+request-size protection
+```
+
+Add frontend tests where the project's existing infrastructure supports them, covering at least:
+
+```text
+viewer initialization
+metadata loading
+layer toggling
+gene search
+gene visualization
+cluster selection
+UMAP rendering
+spatial ↔ UMAP selection synchronization
+error states
+```
+
+Do not remove existing tests.
+
+All existing tests should continue passing.
+
+---
+
+# 24. Docker / Codespaces
+
+Preserve the existing workflow:
+
+```bash
+docker compose up -d --build
+docker compose exec web python manage.py migrate
+```
+
+If dependencies change:
+
+1. update the appropriate dependency files,
+2. update Docker configuration only when required,
+3. rebuild,
+4. run Django checks,
+5. run tests,
+6. verify the viewer.
+
+---
+
+# 25. Documentation
+
+Update project documentation with:
+
+```text
+Spatial Viewer
+--------------
+
+Purpose
+Architecture
+Dataset registration
+Supported data formats
+API endpoints
+Frontend architecture
+Synthetic dataset
+Local development
+Docker/Codespaces usage
+Adding a dataset
+Adding a visualization layer
+Performance considerations
+```
+
+Include concrete commands where appropriate.
+
+---
+
+# 26. Implementation Phases
+
+Implement incrementally.
+
+## Phase 1 — Architecture
+
+Inspect and document the existing architecture.
+
+Implement:
+
+```text
+dataset representation
+viewer route
+viewer template
+metadata API
+basic spatial API
+```
+
+## Phase 2 — Synthetic Dataset
+
+Implement:
+
+```text
+synthetic dataset
+coordinates
+expression
+clusters
+UMAP
+```
+
+and verify the complete pipeline.
+
+## Phase 3 — Spatial Canvas
+
+Implement:
+
+```text
+pan
+zoom
+reset
+fit
+coordinates
+layers
+selection
+```
+
+## Phase 4 — Gene Expression
+
+Implement:
+
+```text
+gene search
+expression endpoint
+spatial expression rendering
+color scale
+legend
+```
+
+## Phase 5 — Clustering
+
+Implement:
+
+```text
+cluster endpoint
+cluster layer
+legend
+selection
+metadata
+```
+
+## Phase 6 — UMAP
+
+Implement:
+
+```text
+UMAP panel
+cluster coloring
+selection
+spatial ↔ UMAP synchronization
+```
+
+## Phase 7 — Images and Segmentation
+
+Implement:
+
+```text
+tissue image
+tissue mask
+cell mask
+cell selection
+```
+
+## Phase 8 — Real Data
+
+Implement a first real spatial-data reader, preferably starting with the format best supported by the repository/environment.
+
+Design the reader interface so additional formats can be added without rewriting the viewer.
+
+---
+
+# 27. Verification After Each Phase
+
+After each major implementation phase:
+
+### Run
+
+```bash
+python manage.py check
+```
+
+### Run
+
+```bash
+python manage.py test
+```
+
+or the repository's established test command.
+
+### Verify
+
+* existing routes still load
+* `/admin/` still works
+* `/graph/` still works
+* `/api/graph/` still works
+* existing tests still pass
+* spatial viewer loads
+* API responses are valid
+* browser console has no avoidable errors.
+
+If Docker is part of the development workflow, verify inside the container as well.
+
+Do not claim something works unless you actually tested it.
+
+---
+
+# 28. Error and Empty States
+
+Every unavailable feature must fail explicitly and gracefully.
+
+Examples:
+
+```text
+No tissue image available.
+No tissue mask available.
+No cell segmentation available.
+No clustering result available.
+No UMAP result available.
+Gene not found.
+Dataset unavailable.
+Expression data could not be loaded.
+```
+
+Backend logs should contain useful diagnostics without exposing sensitive filesystem information.
+
+---
+
+# 29. Security Requirements
+
+Never expose arbitrary filesystem access.
+
+Do not implement APIs such as:
+
+```text
+/api/file/?path=/etc/...
+```
+
+Only serve files associated with registered datasets.
+
+Validate and constrain:
+
+```text
+dataset IDs
+gene names
+coordinate ranges
+requested files
+query sizes
+```
+
+Prevent path traversal and unbounded data requests.
+
+---
+
+# 30. Definition of Done
+
+The implementation is complete only when:
+
+* the existing Django application still works,
+* existing provenance functionality still works,
+* the spatial viewer is integrated into the existing project,
+* the synthetic dataset works end-to-end,
+* the spatial canvas supports interaction,
+* layers can be toggled,
+* gene expression can be queried and visualized,
+* clusters can be visualized when available,
+* UMAP can be displayed when available,
+* spatial and UMAP selections can synchronize,
+* missing data has explicit UI states,
+* large data is accessed incrementally,
+* large matrices are not sent wholesale to the browser,
+* the architecture supports real spatial datasets,
+* tests pass,
+* Django checks pass,
+* Docker/Codespaces remains functional,
+* documentation is updated.
+
+---
+
+# EXECUTION RULE
+
+**Start now with repository inspection.**
+
+Do not modify files before completing the discovery phase.
+
+Your first response should contain only:
+
+1. a concise summary of the architecture you discovered,
+2. the proposed implementation plan,
+3. the files you expect to modify/create,
+4. any important architectural risks or decisions.
+
+Then begin implementation with **Phase 1** and proceed incrementally.
+
+Do not make destructive changes.
+Do not invent repository details.
+Do not claim verification that has not actually been performed.

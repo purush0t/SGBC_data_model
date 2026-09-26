@@ -4,3 +4,4 @@ __pycache__/
 *.sqlite3
 .venv/
 venv/
+datamodel_demo/data/spatial/

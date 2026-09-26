@@ -2,3 +2,6 @@ Django==6.1.1
 mysqlclient==2.2.7
 django-unfold==0.105.0
 jupyterlab==4.4.9
+Pillow>=10.0
+spatialdata==0.8.0
+spatialdata-io==0.7.1

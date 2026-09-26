@@ -58,6 +58,41 @@ Run local tests without a database service:
 cd datamodel_demo
 python manage.py test app1 --settings=datamodel_demo.test_settings
 ```
+
+## Spatial viewer
+
+The spatial viewer is available at `/spatial/` and defaults to the real
+mouse-liver SpatialData demo. Download the versioned, CC BY 4.0 sample store
+before starting the app:
+
+```bash
+./scripts/download_spatialdata_demo.sh
+docker compose up -d --build
+```
+
+Open <http://localhost:8000/spatial/>. The reader loads the image, segmentation,
+cell coordinates, annotations, and raw gene counts from Zarr; source data stays
+outside MySQL and is excluded from Git. The synthetic development dataset
+remains available at `/spatial/synthetic-demo/`.
+
+The API uses bounded, gene-targeted responses rather than sending the expression
+matrix to the browser:
+
+```text
+/api/spatial/
+/api/spatial/<dataset_id>/metadata/
+/api/spatial/<dataset_id>/coordinates/?xmin=...&xmax=...&ymin=...&ymax=...
+/api/spatial/<dataset_id>/expression/?gene=Gene_0&limit=50000
+/api/spatial/<dataset_id>/image/
+/api/spatial/<dataset_id>/mask/
+```
+
+To register a real provenance entity as a future spatial dataset, add a
+`spatial_dataset` object to the latest `EntityInformationRecord.metadata` for
+that entity. The object may declare `name`, `description`, `layers`, `genes`,
+`n_bins`, and `n_genes`. The graph links registered entities to
+`/spatial/entity-<id>/`; until a compatible reader is installed, the viewer
+reports the dataset as registered but unavailable rather than fabricating data.
 # SGBC_data_model
 
 *I want to make a data model including biospecimen and biosample, which models relationships through the abstraction of Activity - eg in post mortem whole brain histology, the biospecimen is the donor, and the activity of extraction produces the biosample 'brain'. Now the biosample can again be acted upon, like perfusion, fixation, freezing, storing, etc, each producing an artifact. I want to model this using dbml*

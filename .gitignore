@@ -3,5 +3,6 @@ datamodel_demo/__pycache__
 datamodel_demo/app1/__pycache__
 datamodel_demo/app1/management/__pycache__
 datamodel_demo/app1/management/commands/__pycache__
+datamodel_demo/data/spatial/
 .vscode
 datamodel_demo/.ipynb_checkpoints

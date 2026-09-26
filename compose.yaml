@@ -30,6 +30,7 @@ services:
       MYSQL_PORT: "3306"
     volumes:
       - ./datamodel_demo:/app
+      - ./docs:/docs:ro
     ports:
       - "8000:8000"
     depends_on:

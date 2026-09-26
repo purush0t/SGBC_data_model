@@ -22,6 +22,13 @@ from app1.views import (
     activity_timeline_lane,
     graph_data,
     graph_explorer,
+    spatial_coordinates,
+    spatial_datasets,
+    spatial_expression,
+    spatial_image,
+    spatial_mask,
+    spatial_metadata,
+    spatial_viewer,
 )
 
 urlpatterns = [
@@ -38,4 +45,12 @@ urlpatterns = [
     path("admin/", admin.site.urls),
     path("graph/", graph_explorer, name="graph-explorer"),
     path("api/graph/", graph_data, name="graph-data"),
+    path("spatial/", spatial_viewer, name="spatial-viewer"),
+    path("spatial/<slug:dataset_id>/", spatial_viewer, name="spatial-viewer-dataset"),
+    path("api/spatial/", spatial_datasets, name="spatial-datasets"),
+    path("api/spatial/<slug:dataset_id>/metadata/", spatial_metadata, name="spatial-metadata"),
+    path("api/spatial/<slug:dataset_id>/coordinates/", spatial_coordinates, name="spatial-coordinates"),
+    path("api/spatial/<slug:dataset_id>/expression/", spatial_expression, name="spatial-expression"),
+    path("api/spatial/<slug:dataset_id>/image/", spatial_image, name="spatial-image"),
+    path("api/spatial/<slug:dataset_id>/mask/", spatial_mask, name="spatial-mask"),
 ]

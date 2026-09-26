@@ -1,0 +1,50 @@
+{% load static %}
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>{{ dataset_id }} | Spatial viewer</title>
+  <link rel="stylesheet" href="{% static 'app1/spatial/spatial.css' %}">
+</head>
+<body data-dataset-id="{{ dataset_id }}">
+  <header class="topbar">
+    <div><p class="eyebrow">SGBC / spatial analysis</p><h1>Spatial viewer</h1></div>
+    <div class="dataset-chip"><span class="status-dot"></span><span id="dataset-name">Loading dataset</span></div>
+    <a class="graph-link" href="{% url 'graph-explorer' %}">Open provenance graph</a>
+  </header>
+  <main class="workspace">
+    <aside class="control-panel">
+      <section class="panel-section">
+        <div class="section-heading"><span>Dataset</span><span id="dataset-kind" class="tag">...</span></div>
+        <p id="dataset-description" class="muted">Loading metadata...</p>
+        <dl id="dataset-stats" class="stats"></dl>
+      </section>
+      <section class="panel-section">
+        <div class="section-heading"><span>Layers</span><span class="muted">live</span></div>
+        <div id="layers" class="layers"></div>
+      </section>
+      <section class="panel-section">
+        <label class="field-label" for="gene-search">Gene</label>
+        <div class="search-row"><input id="gene-search" list="gene-list" placeholder="Search a gene"><button id="gene-submit" title="Load gene expression">Load</button></div>
+        <datalist id="gene-list"></datalist>
+        <p id="gene-state" class="muted">Choose a gene to view raw counts.</p>
+        <div class="legend"><span id="expression-min">0</span><span class="legend-gradient"></span><span id="expression-max">0</span></div>
+        <p class="legend-caption">raw counts per cell</p>
+        <label class="opacity-control" for="layer-opacity">Overlay opacity <input id="layer-opacity" type="range" min="10" max="100" value="85"><output id="opacity-value">85%</output></label>
+        <div id="selection-details" class="selection-details muted">Select a cell to inspect its available metadata.</div>
+      </section>
+      <section class="panel-section panel-note">
+        <p><strong>Data contract</strong></p>
+        <p class="muted">Expression is shown as raw counts. Synthetic values are labeled and are not biological observations.</p>
+      </section>
+    </aside>
+    <section class="canvas-panel">
+      <div class="canvas-toolbar"><button id="fit-view" title="Fit all points">Fit view</button><button id="reset-view" title="Reset view">Reset</button><span id="canvas-state" class="muted">Preparing canvas</span></div>
+      <div id="canvas-wrap" class="canvas-wrap"><canvas id="spatial-canvas"></canvas><div id="empty-state" class="empty-state">Loading spatial coordinates...</div><div id="tooltip" class="tooltip" hidden></div></div>
+      <div class="canvas-footer"><span id="coordinate-readout">x -- · y --</span><span id="selection-readout">No cell selected</span></div>
+    </section>
+  </main>
+  <script src="{% static 'app1/spatial/spatial-viewer.js' %}?v=expression-overlay-20260926"></script>
+</body>
+</html>
