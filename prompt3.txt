@@ -1,0 +1,540 @@
+Here is a cleaner continuation prompt for Copilot. It makes Copilot **inspect the existing Codespace/server rather than assume what is inside `/usr`**, and then trace exactly which files are required by the current spatial viewer.
+
+# Continue the Spatial Viewer Investigation — Identify Data Files and `/usr` Disk Usage
+
+This is a continuation of the previous spatial viewer work.
+
+Do **not** start the project from scratch.
+
+The existing Django application already has a `/spatial/` page, and we are building it into a spatial transcriptomics viewer.
+
+Before adding more viewer functionality, I want you to investigate two things:
+
+1. **Why `/usr` is consuming approximately 8.3 GB of disk space**
+2. **Exactly which input files/data are required by the current spatial viewer to display the different spatial layers**
+
+I have my own spatial transcriptomics data and want to load it into this viewer later.
+
+---
+
+# Part 1 — Investigate `/usr` and the 8.3 GB usage
+
+First inspect the current environment.
+
+Run appropriate commands such as:
+
+```bash
+du -sh /usr
+du -h --max-depth=1 /usr | sort -h
+```
+
+Then investigate the largest directories, for example:
+
+```bash
+du -h --max-depth=1 /usr/local | sort -h
+du -h --max-depth=1 /usr/lib | sort -h
+du -h --max-depth=1 /usr/share | sort -h
+```
+
+Do not blindly delete anything.
+
+I want to understand what is consuming the space.
+
+Identify the major contributors, such as:
+
+```text
+Python packages
+system libraries
+CUDA libraries
+Node/npm packages
+Conda environments
+R packages
+Docker-related files
+development tools
+cache files
+```
+
+if they exist.
+
+Also check:
+
+```bash
+df -h
+```
+
+to determine which filesystem the `/usr` directory belongs to.
+
+If this is a Docker/Codespaces environment, determine whether `/usr` is part of the container image rather than persistent project storage.
+
+### Important
+
+Do **not** remove packages or files just to reduce the 8.3 GB usage.
+
+The goal at this stage is investigation and explanation.
+
+Provide a summary like:
+
+```text
+/usr total: 8.3 GB
+
+Major consumers:
+----------------
+/usr/local/...   X GB
+/usr/lib/...     X GB
+/usr/share/...   X GB
+...
+
+Likely purpose:
+...
+
+Safe to remove:
+...
+
+Should NOT be removed:
+...
+```
+
+If something is unclear, inspect it further before making assumptions.
+
+---
+
+# Part 2 — Identify exactly what the spatial viewer currently uses
+
+Now inspect the existing spatial viewer implementation.
+
+Trace the complete data flow from:
+
+```text
+/spatial/
+```
+
+through the backend and into the visualization.
+
+Find:
+
+```text
+URL
+  ↓
+Django view
+  ↓
+Spatial API
+  ↓
+Dataset reader/loader
+  ↓
+Input files
+  ↓
+Frontend
+  ↓
+Spatial visualization
+```
+
+I want to know **exactly which files the current implementation reads**.
+
+Search the repository for references to:
+
+```text
+SpatialData
+spatialdata
+spatialdata-io
+AnnData
+H5AD
+GEF
+GEF
+.tif
+.tiff
+.png
+.jpg
+.jpeg
+.h5
+.h5ad
+.zarr
+mask
+segmentation
+image
+transcript
+expression
+cluster
+umap
+```
+
+Also inspect:
+
+```text
+settings.py
+urls.py
+views.py
+models.py
+utils.py
+spatial-related Python modules
+templates/
+static/
+API endpoints
+configuration files
+```
+
+---
+
+# Part 3 — Build a complete spatial-input inventory
+
+I want a clear inventory of the different types of files/data that the current viewer can use.
+
+Do not just give me generic spatial-transcriptomics file types.
+
+Trace the **actual implementation** and tell me what it currently expects.
+
+For each layer, identify:
+
+| Viewer content      | Input data required | File format | Actual file/path used | Backend reader | API endpoint |
+| ------------------- | ------------------- | ----------- | --------------------- | -------------- | ------------ |
+| Tissue image        | ?                   | ?           | ?                     | ?              | ?            |
+| Tissue mask         | ?                   | ?           | ?                     | ?              | ?            |
+| Cell mask           | ?                   | ?           | ?                     | ?              | ?            |
+| Spatial coordinates | ?                   | ?           | ?                     | ?              | ?            |
+| Gene expression     | ?                   | ?           | ?                     | ?              | ?            |
+| Transcript points   | ?                   | ?           | ?                     | ?              | ?            |
+| Cell metadata       | ?                   | ?           | ?                     | ?              | ?            |
+| Clusters            | ?                   | ?           | ?                     | ?              | ?            |
+| UMAP                | ?                   | ?           | ?                     | ?              | ?            |
+
+Fill this table based on the actual code wherever possible.
+
+If something is not currently implemented, explicitly say:
+
+```text
+Not currently implemented
+```
+
+Do not assume that a file is supported just because it is a common spatial-transcriptomics format.
+
+---
+
+# Part 4 — Trace the physical file locations
+
+I want to know **where the actual files are located**.
+
+Search the current project and environment for the demo spatial dataset and any other spatial data being used.
+
+For example:
+
+```bash
+find . -type f | grep -Ei 'gef|h5ad|zarr|tif|tiff|png|mask|spatial'
+```
+
+Also inspect any configured data directories.
+
+If the application uses:
+
+```text
+data/
+media/
+static/
+staticfiles/
+datasets/
+spatial/
+```
+
+identify the relevant locations.
+
+For each required file, report:
+
+```text
+File:
+Absolute path:
+Relative path:
+Purpose:
+Used by:
+```
+
+Example:
+
+```text
+File:
+mouse_liver.h5ad
+
+Location:
+data/spatial/mouse_liver_demo/mouse_liver.h5ad
+
+Purpose:
+Gene-expression matrix + cell metadata
+
+Used by:
+SpatialDataReader
+
+API:
+ /api/spatial/mouse_liver_demo/expression/
+```
+
+Do not invent paths. Only report paths that actually exist or are explicitly configured.
+
+---
+
+# Part 5 — Distinguish files from derived data
+
+This is important.
+
+Separate:
+
+### Raw/input files
+
+For example:
+
+```text
+image
+GEF
+H5AD
+mask
+coordinates
+```
+
+from:
+
+### Derived/analysis files
+
+For example:
+
+```text
+clusters
+UMAP
+normalized expression
+cell annotations
+```
+
+and:
+
+### Viewer-generated data
+
+For example:
+
+```text
+tiles
+cached JSON
+downsampled coordinates
+precomputed visualization data
+```
+
+I want to understand what I actually need to provide to the viewer versus what the application generates itself.
+
+---
+
+# Part 6 — Map this to my own spatial data
+
+I have my own Stereo-seq/spatial-transcriptomics data that I eventually want to visualize.
+
+Do NOT modify the application yet.
+
+First tell me what files from my dataset would be required.
+
+I want a mapping like:
+
+```text
+My spatial dataset
+       |
+       +-- Tissue image
+       |      ↓
+       |   Viewer image layer
+       |
+       +-- Tissue/cell mask
+       |      ↓
+       |   Mask layer
+       |
+       +-- Spatial coordinates
+       |      ↓
+       |   Spatial points/cells
+       |
+       +-- Expression matrix
+       |      ↓
+       |   Gene expression heatmap
+       |
+       +-- Cluster result
+       |      ↓
+       |   Cluster layer
+       |
+       +-- UMAP coordinates
+              ↓
+           UMAP panel
+```
+
+Then identify which of these my current application already supports.
+
+---
+
+# Part 7 — Specifically investigate Stereo-seq / SAW inputs
+
+Since the eventual target is my own Stereo-seq data, inspect how the current architecture could consume files produced by SAW.
+
+Consider files such as:
+
+```text
+*.gef
+*.raw.gef
+*.tissue.gef
+barcodeToPos.h5
+H5AD
+tissue images
+mask files
+cluster outputs
+UMAP outputs
+```
+
+But do NOT assume all of these are required.
+
+Determine:
+
+```text
+Which file contains spatial coordinates?
+Which file contains gene expression?
+Which file contains tissue information?
+Which file contains cell/bin information?
+Which file contains image information?
+Which file contains segmentation/masks?
+Which file contains cluster assignments?
+Which file contains UMAP coordinates?
+```
+
+Then compare this with what the current viewer expects.
+
+---
+
+# Part 8 — Identify missing adapters
+
+After comparing the current viewer with the expected Stereo-seq inputs, identify what is missing.
+
+For example:
+
+```text
+Current viewer supports:
+✓ H5AD expression
+✓ image
+✓ segmentation
+
+Missing:
+✗ GEF reader
+✗ barcodeToPos.h5 reader
+✗ SAW mask reader
+✗ cluster import
+✗ UMAP import
+```
+
+Do not implement these yet unless necessary.
+
+First produce the gap analysis.
+
+---
+
+# Part 9 — Produce a final architecture/data-flow diagram
+
+At the end, show the current architecture clearly:
+
+```text
+                 Spatial Dataset
+                       |
+       +---------------+---------------+
+       |               |               |
+     Image          Expression      Spatial
+       |               |           Coordinates
+       |               |               |
+       +---------------+---------------+
+                       |
+                Dataset Reader
+                       |
+                  Django API
+                       |
+                  /spatial/
+                       |
+              Interactive Viewer
+                       |
+        +--------------+--------------+
+        |              |              |
+      Image          Gene           Spatial
+                     Heatmap          View
+        |              |              |
+      Mask          Cluster          UMAP
+```
+
+Then show the future Stereo-seq architecture:
+
+```text
+SAW output
+   |
+   +-- GEF
+   +-- barcodeToPos.h5
+   +-- image
+   +-- mask
+   +-- analysis results
+   |
+   v
+StereoSeq/GEF Reader
+   |
+   v
+Common SpatialDataset interface
+   |
+   v
+Django Spatial API
+   |
+   v
+Same spatial viewer
+```
+
+---
+
+# Part 10 — Important constraints
+
+Do NOT:
+
+* delete anything from `/usr`
+* uninstall packages without asking
+* modify unrelated parts of the project
+* assume a file is supported without checking the code
+* invent file paths
+* assume GEF/H5AD support exists without verifying it
+* redesign the entire viewer yet
+
+This task is primarily **investigation and mapping**.
+
+---
+
+# Final output I want
+
+At the end, give me these five sections:
+
+## 1. `/usr` Disk Usage
+
+Explain what is consuming the ~8.3 GB.
+
+## 2. Current Spatial Viewer Data Flow
+
+Show:
+
+```text
+file → reader → API → frontend → visualization
+```
+
+## 3. Current Input Files
+
+A table containing:
+
+```text
+layer
+required input
+format
+actual location
+reader
+API
+status
+```
+
+## 4. My Stereo-seq Data Mapping
+
+Explain which of my SAW/Stereo-seq files correspond to each viewer layer.
+
+## 5. Missing Pieces
+
+Clearly list what needs to be implemented before my own spatial dataset can be loaded.
+
+### Most important
+
+Do not start implementing new functionality until this investigation is complete.
+
+I want to understand:
+
+> **What does the current spatial viewer actually consume, where are those files located, and what files from my own Stereo-seq dataset do I need to provide to reproduce the same visualization?**
