@@ -75,6 +75,12 @@ cell coordinates, annotations, and raw gene counts from Zarr; source data stays
 outside MySQL and is excluded from Git. The synthetic development dataset
 remains available at `/spatial/synthetic-demo/`.
 
+To add more compatible SpatialData stores, place each `.zarr` directory directly
+under `datamodel_demo/data/spatial/`. The viewer discovers these stores and lists
+them in the dataset selector; a directory named `test_out.zarr` is opened at
+`/spatial/test_out/`. The STOmics converter defaults to this directory and names
+its output from the cell-bin GEF unless `--dataset-id` or `--output` is supplied.
+
 The API uses bounded, gene-targeted responses rather than sending the expression
 matrix to the browser:
 

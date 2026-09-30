@@ -1,3 +1,7 @@
+from pathlib import Path
+from tempfile import TemporaryDirectory
+from unittest.mock import patch
+
 from django.test import TestCase
 
 from .models import Entity, EntityInformationRecord, EntityType, InformationRecordType
@@ -48,6 +52,20 @@ class SpatialApiTests(TestCase):
         response = self.client.get("/api/spatial/unknown/metadata/")
 
         self.assertEqual(response.status_code, 404)
+
+    def test_zarr_stores_in_spatial_directory_are_listed_by_name(self):
+        with TemporaryDirectory() as temporary_directory:
+            test_store = Path(temporary_directory) / "test_out.zarr"
+            test_store.mkdir()
+            (test_store / "zarr.json").write_text("{}", encoding="utf-8")
+            with patch("app1.spatial._spatial_data_directory", return_value=Path(temporary_directory)):
+                response = self.client.get("/api/spatial/")
+
+        self.assertEqual(response.status_code, 200)
+        test_store = next(
+            dataset for dataset in response.json()["datasets"] if dataset["id"] == "test_out"
+        )
+        self.assertTrue(test_store["reader_available"])
 
     def test_provenance_metadata_registers_unavailable_dataset_explicitly(self):
         entity = Entity.objects.create(entity_type=self.entity_type, identifier="matrix-001")

@@ -8,6 +8,7 @@ from io import BytesIO
 from math import exp
 import os
 from pathlib import Path
+import re
 
 import numpy as np
 
@@ -120,18 +121,33 @@ def _mouse_liver_path() -> Path:
     configured_path = os.environ.get("SPATIALDATA_MOUSE_LIVER_PATH")
     if configured_path:
         return Path(configured_path)
-    return Path(__file__).resolve().parents[1] / "data" / "spatial" / "mouse_liver.zarr"
+    return _spatial_data_directory() / "mouse_liver.zarr"
+
+
+def _spatial_data_directory() -> Path:
+    configured_path = os.environ.get("SPATIALDATA_DIRECTORY")
+    if configured_path:
+        return Path(configured_path).expanduser()
+    return Path(__file__).resolve().parents[1] / "data" / "spatial"
+
+
+def _dataset_slug(name: str) -> str:
+    return re.sub(r"[^a-zA-Z0-9_-]+", "-", name).strip("-_").lower()
 
 
 @dataclass(frozen=True)
-class MouseLiverSpatialDataReader(SpatialDatasetReader):
-    data_path: Path = _mouse_liver_path()
+class SpatialDataZarrReader(SpatialDatasetReader):
+    data_path: Path
+    name: str
+    description: str
+    species: str
+    platform: str
 
     @cached_property
     def _data(self):
         if not self.data_path.is_dir():
             raise SpatialDatasetUnavailable(
-                "The mouse-liver SpatialData store is missing. Run scripts/download_spatialdata_demo.sh."
+                f"The SpatialData store for {self.dataset_id!r} is missing at {self.data_path}."
             )
         try:
             import spatialdata
@@ -147,6 +163,17 @@ class MouseLiverSpatialDataReader(SpatialDatasetReader):
     @cached_property
     def _table(self):
         return self._data.tables["table"]
+
+    @cached_property
+    def _image_raster(self):
+        image = self._data.images.get("raw_image")
+        if image is None:
+            return None
+        levels = list(image.keys())
+        if not levels:
+            return None
+        level_name = "scale1" if "scale1" in levels else levels[0]
+        return image[level_name].ds["image"]
 
     @cached_property
     def _cells(self):
@@ -172,11 +199,44 @@ class MouseLiverSpatialDataReader(SpatialDatasetReader):
         return cells
 
     def get_metadata(self) -> dict:
+        if not self.data_path.is_dir():
+            return {
+                "id": self.dataset_id,
+                "name": self.name,
+                "description": self.description,
+                "species": self.species,
+                "platform": self.platform,
+                "resolution": "Unavailable",
+                "width": 0,
+                "height": 0,
+                "n_bins": 0,
+                "n_genes": 0,
+                "genes": [],
+                "layers": [
+                    {"id": layer_id, "name": layer_name, "available": False}
+                    for layer_id, layer_name in (
+                        ("coordinates", "Spatial cells"),
+                        ("image", "Tissue image"),
+                        ("tissue_mask", "Segmentation mask"),
+                        ("cell_boundaries", "Cell boundaries"),
+                        ("expression", "Gene expression"),
+                        ("cell_annotations", "Cell annotations"),
+                    )
+                ],
+                "synthetic": False,
+                "reader_available": False,
+            }
         data = self._data
         image = data.images.get("raw_image")
         segmentation = data.labels.get("segmentation_mask")
         table = self._table
-        height, width = segmentation.shape if segmentation is not None else (0, 0)
+        if segmentation is not None:
+            height, width = segmentation.shape
+        elif self._image_raster is not None:
+            height = self._image_raster.sizes["y"]
+            width = self._image_raster.sizes["x"]
+        else:
+            height, width = 0, 0
         available = {
             "coordinates": True,
             "image": image is not None,
@@ -212,10 +272,10 @@ class MouseLiverSpatialDataReader(SpatialDatasetReader):
         }
         return {
             "id": self.dataset_id,
-            "name": "Mouse Liver SpatialData Demo",
-            "description": "Molecular Cartography mouse-liver demo from Guilliams et al. 2022.",
-            "species": "Mouse",
-            "platform": "Molecular Cartography",
+            "name": self.name,
+            "description": self.description,
+            "species": self.species,
+            "platform": self.platform,
             "resolution": f"{width} × {height} pixels",
             "width": int(width),
             "height": int(height),
@@ -232,6 +292,7 @@ class MouseLiverSpatialDataReader(SpatialDatasetReader):
                 for layer_id, is_available in available.items()
             ],
             "synthetic": False,
+            "reader_available": True,
             "expression_scale": "raw counts",
         }
 
@@ -239,9 +300,24 @@ class MouseLiverSpatialDataReader(SpatialDatasetReader):
     def _image_png(self) -> bytes:
         from PIL import Image
 
-        image = self._data.images["raw_image"]["scale1"].ds["image"].isel(c=0).data.compute()
-        low, high = np.percentile(image, (1, 99))
-        pixels = np.clip((image.astype(np.float32) - low) * (255 / max(high - low, 1)), 0, 255).astype(np.uint8)
+        image = self._image_raster
+        if image is None:
+            raise SpatialDataError("The tissue image is unavailable.")
+        pixels = image.data.compute()
+        if "c" in image.dims:
+            pixels = np.moveaxis(pixels, image.get_axis_num("c"), -1)
+        if pixels.shape[-1:] == (1,):
+            pixels = pixels[..., 0]
+        if pixels.dtype != np.uint8:
+            if pixels.ndim == 2:
+                low, high = np.percentile(pixels, (1, 99))
+                pixels = np.clip((pixels.astype(np.float32) - low) * (255 / max(high - low, 1)), 0, 255)
+            else:
+                low, high = np.percentile(pixels, (1, 99), axis=(0, 1), keepdims=True)
+                pixels = np.clip((pixels.astype(np.float32) - low) * (255 / np.maximum(high - low, 1)), 0, 255)
+            pixels = pixels.astype(np.uint8)
+        if pixels.ndim == 3 and pixels.shape[-1] > 3:
+            pixels = pixels[..., :3]
         output = BytesIO()
         Image.fromarray(pixels).save(output, format="PNG", optimize=True)
         return output.getvalue()
@@ -250,7 +326,10 @@ class MouseLiverSpatialDataReader(SpatialDatasetReader):
     def _mask_png(self) -> bytes:
         from PIL import Image
 
-        mask = self._data.labels["segmentation_mask"].isel(y=slice(None, None, 4), x=slice(None, None, 4))
+        segmentation = self._data.labels.get("segmentation_mask")
+        if segmentation is None:
+            raise SpatialDataError("The segmentation mask is unavailable.")
+        mask = segmentation.isel(y=slice(None, None, 4), x=slice(None, None, 4))
         labels = mask.data.compute().astype(np.int32)
         colors = np.random.default_rng(2022).integers(55, 220, size=(int(labels.max()) + 1, 3), dtype=np.uint8)
         pixels = np.zeros((*labels.shape, 4), dtype=np.uint8)
@@ -330,8 +409,39 @@ class RegisteredSpatialDatasetReader(SpatialDatasetReader):
 
 _READERS = {
     "synthetic-demo": SyntheticSpatialDatasetReader("synthetic-demo"),
-    "mouse_liver_demo": MouseLiverSpatialDataReader("mouse_liver_demo"),
+    "mouse_liver_demo": SpatialDataZarrReader(
+        "mouse_liver_demo",
+        _mouse_liver_path(),
+        "Mouse Liver SpatialData Demo",
+        "Molecular Cartography mouse-liver demo from Guilliams et al. 2022.",
+        "Mouse",
+        "Molecular Cartography",
+    ),
 }
+
+
+def _zarr_readers() -> dict[str, SpatialDataZarrReader]:
+    directory = _spatial_data_directory()
+    if not directory.is_dir():
+        return {}
+    readers = {}
+    for data_path in sorted(directory.glob("*.zarr")):
+        if not ((data_path / "zarr.json").is_file() or (data_path / ".zgroup").is_file()):
+            continue
+        if data_path.resolve() == _mouse_liver_path().resolve():
+            continue
+        dataset_id = _dataset_slug(data_path.name.removesuffix(".zarr"))
+        if not dataset_id or dataset_id in _READERS or dataset_id in readers:
+            continue
+        readers[dataset_id] = SpatialDataZarrReader(
+            dataset_id,
+            data_path,
+            data_path.name.removesuffix(".zarr").replace("_", " "),
+            "SpatialData Zarr store.",
+            "Unknown",
+            "SpatialData",
+        )
+    return readers
 
 
 def _registered_readers() -> dict[str, RegisteredSpatialDatasetReader]:
@@ -367,7 +477,7 @@ def _registered_readers() -> dict[str, RegisteredSpatialDatasetReader]:
 
 
 def get_reader(dataset_id: str) -> SpatialDatasetReader:
-    readers = {**_READERS, **_registered_readers()}
+    readers = {**_READERS, **_zarr_readers(), **_registered_readers()}
     try:
         return readers[dataset_id]
     except KeyError as error:
@@ -375,5 +485,16 @@ def get_reader(dataset_id: str) -> SpatialDatasetReader:
 
 
 def list_datasets() -> list[dict]:
-    readers = {**_READERS, **_registered_readers()}
-    return [reader.get_metadata() for reader in readers.values()]
+    readers = {**_READERS, **_zarr_readers(), **_registered_readers()}
+    datasets = []
+    for reader in readers.values():
+        if isinstance(reader, SpatialDataZarrReader):
+            datasets.append({
+                "id": reader.dataset_id,
+                "name": reader.name,
+                "description": reader.description,
+                "reader_available": reader.data_path.is_dir(),
+            })
+        else:
+            datasets.append(reader.get_metadata())
+    return datasets

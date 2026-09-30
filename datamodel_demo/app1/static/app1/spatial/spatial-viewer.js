@@ -14,6 +14,31 @@
     if (!response.ok) throw new Error(data.error || 'Spatial request failed.');
     return data;
   });
+  const loadDatasetPicker = () => fetch('/api/spatial/').then(async (response) => {
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || 'Could not load spatial datasets.');
+    const picker = $('#dataset-select');
+    picker.replaceChildren(...data.datasets.map(dataset => {
+      const option = document.createElement('option');
+      option.value = dataset.id;
+      option.textContent = dataset.name;
+      option.disabled = dataset.reader_available === false;
+      return option;
+    }));
+    if (![...picker.options].some(option => option.value === datasetId)) {
+      const option = document.createElement('option');
+      option.value = datasetId;
+      option.textContent = datasetId;
+      picker.add(option);
+    }
+    picker.value = datasetId;
+    picker.addEventListener('change', () => {
+      window.location.assign(`/spatial/${encodeURIComponent(picker.value)}/`);
+    });
+  }).catch(error => {
+    $('#dataset-select').replaceChildren(new Option(error.message, ''));
+    $('#dataset-select').disabled = true;
+  });
   const setMessage = (message, error = false) => {
     $('#canvas-state').textContent = message;
     $('#canvas-state').style.color = error ? '#ed705d' : '';
@@ -150,5 +175,5 @@
   canvas.addEventListener('pointermove', event => { const rect = canvas.getBoundingClientRect(), localX = event.clientX - rect.left, localY = event.clientY - rect.top; const coordinate = fromCanvas(localX, localY); $('#coordinate-readout').textContent = `x ${coordinate.x.toFixed(1)} · y ${coordinate.y.toFixed(1)}`; if (state.drag) { state.view.x = state.drag.viewX + event.clientX - state.drag.x; state.view.y = state.drag.viewY + event.clientY - state.drag.y; draw(); } else { const hit = nearestPoint(localX, localY); if (hit.point && hit.distance < 16) { $('#tooltip').hidden = false; $('#tooltip').style.left = `${localX + 14}px`; $('#tooltip').style.top = `${localY + 14}px`; $('#tooltip').textContent = `${hit.point.id} · ${hit.point.annotation || hit.point.cluster || 'Cell'}`; } else $('#tooltip').hidden = true; } });
   canvas.addEventListener('pointerup', event => { if (state.drag) { const rect = canvas.getBoundingClientRect(), hit = nearestPoint(event.clientX - rect.left, event.clientY - rect.top); if (Math.hypot(event.clientX - state.drag.x, event.clientY - state.drag.y) < 5 && hit.point && hit.distance < 16) showSelection(hit.point); } state.drag = null; wrap.classList.remove('is-dragging'); });
   canvas.addEventListener('wheel', event => { event.preventDefault(); const rect = canvas.getBoundingClientRect(), before = fromCanvas(event.clientX - rect.left, event.clientY - rect.top); state.view.scale = Math.max(.35, Math.min(8, state.view.scale * (event.deltaY < 0 ? 1.12 : .89))); const after = toCanvas(before); state.view.x += event.clientX - rect.left - after.x; state.view.y += event.clientY - rect.top - after.y; draw(); }, {passive: false});
-  window.addEventListener('resize', resize); resize(); loadMetadata();
+  window.addEventListener('resize', resize); resize(); loadDatasetPicker(); loadMetadata();
 })();

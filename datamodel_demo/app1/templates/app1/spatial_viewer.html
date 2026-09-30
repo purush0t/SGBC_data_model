@@ -10,7 +10,8 @@
 <body data-dataset-id="{{ dataset_id }}">
   <header class="topbar">
     <div><p class="eyebrow">SGBC / spatial analysis</p><h1>Spatial viewer</h1></div>
-    <div class="dataset-chip"><span class="status-dot"></span><span id="dataset-name">Loading dataset</span></div>
+    <label class="dataset-picker" for="dataset-select"><span>Dataset</span><select id="dataset-select" aria-label="Select spatial dataset"><option>Loading datasets...</option></select></label>
+    <span id="dataset-name" hidden>Loading dataset</span>
     <a class="graph-link" href="{% url 'graph-explorer' %}">Open provenance graph</a>
   </header>
   <main class="workspace">

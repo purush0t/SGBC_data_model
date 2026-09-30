@@ -16,8 +16,9 @@ button:hover { border-color: var(--accent); color: var(--accent); }
 .topbar { min-height: 70px; display: flex; align-items: center; gap: 22px; padding: 12px 22px; border-bottom: 1px solid var(--line); background: #101a20; }
 h1 { margin: 0; font: 600 20px/1.1 Georgia, serif; letter-spacing: 0; }
 .eyebrow { margin: 0 0 3px; color: var(--accent); font: 10px/1.2 "IBM Plex Mono", monospace; letter-spacing: .11em; text-transform: uppercase; }
-.dataset-chip { margin-left: auto; padding: 7px 10px; border: 1px solid var(--line); color: var(--muted); }
-.status-dot { display: inline-block; width: 7px; height: 7px; margin-right: 7px; border-radius: 50%; background: var(--cyan); }
+.dataset-picker { display: flex; align-items: center; gap: 8px; margin-left: auto; color: var(--muted); font: 10px "IBM Plex Mono", monospace; text-transform: uppercase; }
+.dataset-picker select { max-width: min(32vw, 260px); border: 1px solid var(--line); border-radius: 3px; padding: 7px 26px 7px 9px; background: var(--panel-deep); color: var(--ink); font: 12px "IBM Plex Sans", "Segoe UI", sans-serif; text-transform: none; }
+.dataset-picker select:focus { outline: 1px solid var(--accent); }
 .graph-link { color: var(--accent); text-decoration: none; border-bottom: 1px solid transparent; }
 .graph-link:hover { border-color: var(--accent); }
 .workspace { display: grid; grid-template-columns: 285px minmax(0, 1fr); min-height: calc(100vh - 70px); }
@@ -58,4 +59,4 @@ canvas { display: block; width: 100%; height: 100%; cursor: grab; }.is-dragging 
 .empty-state { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); color: var(--muted); text-align: center; }.empty-state.is-hidden { display: none; }
 .tooltip { position: absolute; pointer-events: none; min-width: 150px; padding: 8px 10px; border: 1px solid var(--line); background: #17252bdd; color: var(--ink); font-size: 11px; box-shadow: 0 5px 20px #0008; }
 .canvas-footer { display: flex; justify-content: space-between; padding: 8px 14px; border-top: 1px solid var(--line); color: var(--muted); font: 11px "IBM Plex Mono", monospace; }
-@media (max-width: 760px) { .topbar { gap: 12px; padding: 11px 14px; }.graph-link { font-size: 11px; }.dataset-chip { display: none; }.workspace { display: block; }.control-panel { border-right: 0; }.canvas-wrap { min-height: 62vh; }.panel-section { padding: 13px 14px; } }
+@media (max-width: 760px) { .topbar { flex-wrap: wrap; gap: 10px 12px; padding: 11px 14px; }.dataset-picker { margin-left: auto; }.dataset-picker select { max-width: 48vw; }.graph-link { font-size: 11px; }.workspace { display: block; }.control-panel { border-right: 0; }.canvas-wrap { min-height: 62vh; }.panel-section { padding: 13px 14px; } }
