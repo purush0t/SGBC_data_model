@@ -5,6 +5,7 @@ from unittest.mock import patch
 from django.test import TestCase
 
 from .models import Entity, EntityInformationRecord, EntityType, InformationRecordType
+from .spatial import _scale_spatial_coordinates, _select_display_raster
 
 
 class SpatialApiTests(TestCase):
@@ -39,6 +40,15 @@ class SpatialApiTests(TestCase):
 
         self.assertEqual(missing_gene.status_code, 400)
         self.assertEqual(too_many.status_code, 400)
+
+    def test_preview_raster_selection_and_coordinate_scaling(self):
+        coarse = type("Raster", (), {"sizes": {"x": 1024, "y": 512}})()
+        preview = type("Raster", (), {"sizes": {"x": 4096, "y": 2048}})()
+        full = type("Raster", (), {"sizes": {"x": 16384, "y": 8192}})()
+
+        self.assertIs(_select_display_raster([full, coarse, preview]), preview)
+        coordinates = _scale_spatial_coordinates([[400, 200]], full, preview)
+        self.assertEqual(coordinates.tolist(), [[100.0, 50.0]])
 
     def test_mouse_liver_demo_is_available_and_capable(self):
         response = self.client.get("/api/spatial/mouse_liver_demo/metadata/")

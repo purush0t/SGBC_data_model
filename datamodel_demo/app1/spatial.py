@@ -14,6 +14,7 @@ import numpy as np
 
 
 MAX_POINTS = 50_000
+MAX_IMAGE_DIMENSION = 4096
 
 
 class SpatialDataError(ValueError):
@@ -22,6 +23,26 @@ class SpatialDataError(ValueError):
 
 class SpatialDatasetUnavailable(SpatialDataError):
     """A known dataset is unavailable in this environment."""
+
+
+def _select_display_raster(rasters):
+    rasters = list(rasters)
+    if not rasters:
+        return None
+    suitable = [
+        raster for raster in rasters
+        if max(raster.sizes["x"], raster.sizes["y"]) <= MAX_IMAGE_DIMENSION
+    ]
+    if suitable:
+        return max(suitable, key=lambda raster: raster.sizes["x"] * raster.sizes["y"])
+    return min(rasters, key=lambda raster: raster.sizes["x"] * raster.sizes["y"])
+
+
+def _scale_spatial_coordinates(coordinates, source_raster, display_raster):
+    coordinates = np.asarray(coordinates, dtype=np.float64).copy()
+    coordinates[:, 0] *= display_raster.sizes["x"] / source_raster.sizes["x"]
+    coordinates[:, 1] *= display_raster.sizes["y"] / source_raster.sizes["y"]
+    return coordinates
 
 
 @dataclass(frozen=True)
@@ -165,20 +186,35 @@ class SpatialDataZarrReader(SpatialDatasetReader):
         return self._data.tables["table"]
 
     @cached_property
-    def _image_raster(self):
+    def _image_rasters(self):
         image = self._data.images.get("raw_image")
         if image is None:
+            return ()
+        return tuple(image[level].ds["image"] for level in image.keys())
+
+    @cached_property
+    def _image_raster(self):
+        return _select_display_raster(self._image_rasters)
+
+    @cached_property
+    def _image_reference_raster(self):
+        if not self._image_rasters:
             return None
-        levels = list(image.keys())
-        if not levels:
-            return None
-        level_name = "scale1" if "scale1" in levels else levels[0]
-        return image[level_name].ds["image"]
+        return max(
+            self._image_rasters,
+            key=lambda raster: raster.sizes["x"] * raster.sizes["y"],
+        )
 
     @cached_property
     def _cells(self):
         table = self._table
         coordinates = np.asarray(table.obsm["spatial"])
+        if self._image_reference_raster is not None and self._image_raster is not None:
+            coordinates = _scale_spatial_coordinates(
+                coordinates,
+                self._image_reference_raster,
+                self._image_raster,
+            )
         matrix = table.X.tocsr() if hasattr(table.X, "tocsr") else np.asarray(table.X)
         if hasattr(matrix, "tocsr"):
             detected = np.asarray((matrix > 0).sum(axis=1)).reshape(-1)
