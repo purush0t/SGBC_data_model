@@ -45,6 +45,14 @@ def _scale_spatial_coordinates(coordinates, source_raster, display_raster):
     return coordinates
 
 
+def _spatial_dimensions(image_raster, segmentation):
+    if image_raster is not None:
+        return image_raster.sizes["y"], image_raster.sizes["x"]
+    if segmentation is not None:
+        return segmentation.shape
+    return 0, 0
+
+
 @dataclass(frozen=True)
 class SpatialDatasetReader:
     dataset_id: str
@@ -52,13 +60,13 @@ class SpatialDatasetReader:
     def get_metadata(self) -> dict:
         raise NotImplementedError
 
-    def get_coordinates(self, *, bounds: dict | None = None, limit: int = MAX_POINTS) -> list[dict]:
+    def get_coordinates(self, *, bounds: dict | None = None, limit: int = MAX_POINTS, offset: int = 0) -> list[dict]:
         raise NotImplementedError
 
-    def get_expression(self, gene: str, *, bounds: dict | None = None, limit: int = MAX_POINTS) -> list[dict]:
+    def get_expression(self, gene: str, *, bounds: dict | None = None, limit: int = MAX_POINTS, offset: int = 0) -> list[dict]:
         raise NotImplementedError
 
-    def get_overall_expression(self, *, bounds: dict | None = None, limit: int = MAX_POINTS) -> list[dict]:
+    def get_overall_expression(self, *, bounds: dict | None = None, limit: int = MAX_POINTS, offset: int = 0) -> list[dict]:
         raise NotImplementedError
 
 
@@ -98,9 +106,11 @@ class SyntheticSpatialDatasetReader(SpatialDatasetReader):
             return True
         return bounds["xmin"] <= x <= bounds["xmax"] and bounds["ymin"] <= y <= bounds["ymax"]
 
-    def _points(self, bounds: dict | None, limit: int) -> list[dict]:
+    def _points(self, bounds: dict | None, limit: int, offset: int) -> list[dict]:
         if limit < 1 or limit > MAX_POINTS:
             raise SpatialDataError(f"limit must be between 1 and {MAX_POINTS}.")
+        if offset < 0:
+            raise SpatialDataError("offset must be non-negative.")
         points = []
         for row in range(10):
             for column in range(10):
@@ -112,17 +122,17 @@ class SyntheticSpatialDatasetReader(SpatialDatasetReader):
                         "y": y,
                         "cluster": f"Region {('A', 'B', 'C')[(column + row) % 3]}",
                     })
-        return points[:limit]
+        return points[offset:offset + limit]
 
-    def get_coordinates(self, *, bounds: dict | None = None, limit: int = MAX_POINTS) -> list[dict]:
-        return self._points(bounds, limit)
+    def get_coordinates(self, *, bounds: dict | None = None, limit: int = MAX_POINTS, offset: int = 0) -> list[dict]:
+        return self._points(bounds, limit, offset)
 
-    def get_expression(self, gene: str, *, bounds: dict | None = None, limit: int = MAX_POINTS) -> list[dict]:
+    def get_expression(self, gene: str, *, bounds: dict | None = None, limit: int = MAX_POINTS, offset: int = 0) -> list[dict]:
         if gene not in self.genes:
             raise SpatialDataError(f"Gene {gene!r} was not found in this dataset.")
         gene_index = self.genes.index(gene)
         values = []
-        for point in self._points(bounds, limit):
+        for point in self._points(bounds, limit, offset):
             region = (point["x"] // 10 + point["y"] // 10) % 3
             target = gene_index % 3
             distance = abs(region - target)
@@ -130,8 +140,8 @@ class SyntheticSpatialDatasetReader(SpatialDatasetReader):
             values.append({**point, "value": round(value, 4), "scale": "synthetic raw counts"})
         return values
 
-    def get_overall_expression(self, *, bounds: dict | None = None, limit: int = MAX_POINTS) -> list[dict]:
-        points = self._points(bounds, limit)
+    def get_overall_expression(self, *, bounds: dict | None = None, limit: int = MAX_POINTS, offset: int = 0) -> list[dict]:
+        points = self._points(bounds, limit, offset)
         return [{**point, "value": round(sum(
             2.0 + (8.0 if abs((point["x"] // 10 + point["y"] // 10) % 3 - index % 3) == 0 else 1.5)
             * exp(-((index % 10) / 9)) for index in range(len(self.genes))
@@ -266,13 +276,7 @@ class SpatialDataZarrReader(SpatialDatasetReader):
         image = data.images.get("raw_image")
         segmentation = data.labels.get("segmentation_mask")
         table = self._table
-        if segmentation is not None:
-            height, width = segmentation.shape
-        elif self._image_raster is not None:
-            height = self._image_raster.sizes["y"]
-            width = self._image_raster.sizes["x"]
-        else:
-            height, width = 0, 0
+        height, width = _spatial_dimensions(self._image_raster, segmentation)
         available = {
             "coordinates": True,
             "image": image is not None,
@@ -382,14 +386,16 @@ class SpatialDataZarrReader(SpatialDatasetReader):
         return self._mask_png
 
     @staticmethod
-    def _validate_query(bounds: dict | None, limit: int) -> None:
+    def _validate_query(bounds: dict | None, limit: int, offset: int) -> None:
         if limit < 1 or limit > MAX_POINTS:
             raise SpatialDataError(f"limit must be between 1 and {MAX_POINTS}.")
+        if offset < 0:
+            raise SpatialDataError("offset must be non-negative.")
         if bounds and (bounds["xmin"] > bounds["xmax"] or bounds["ymin"] > bounds["ymax"]):
             raise SpatialDataError("Minimum bounds must not exceed maximum bounds.")
 
-    def _selected_cells(self, bounds: dict | None, limit: int) -> list[dict]:
-        self._validate_query(bounds, limit)
+    def _selected_cells(self, bounds: dict | None, limit: int, offset: int) -> list[dict]:
+        self._validate_query(bounds, limit, offset)
         cells = self._cells
         if bounds:
             cells = [
@@ -397,29 +403,30 @@ class SpatialDataZarrReader(SpatialDatasetReader):
                 if bounds["xmin"] <= cell["x"] <= bounds["xmax"]
                 and bounds["ymin"] <= cell["y"] <= bounds["ymax"]
             ]
-        return cells[:limit]
+        return cells[offset:offset + limit]
 
-    def get_coordinates(self, *, bounds: dict | None = None, limit: int = MAX_POINTS) -> list[dict]:
-        return self._selected_cells(bounds, limit)
+    def get_coordinates(self, *, bounds: dict | None = None, limit: int = MAX_POINTS, offset: int = 0) -> list[dict]:
+        return self._selected_cells(bounds, limit, offset)
 
-    def get_expression(self, gene: str, *, bounds: dict | None = None, limit: int = MAX_POINTS) -> list[dict]:
-        self._validate_query(bounds, limit)
+    def get_expression(self, gene: str, *, bounds: dict | None = None, limit: int = MAX_POINTS, offset: int = 0) -> list[dict]:
+        self._validate_query(bounds, limit, offset)
         table = self._table
         if gene not in table.var_names:
             raise SpatialDataError(f"Gene {gene!r} was not found in this dataset.")
-        column = table[:, gene].X
-        values = column.toarray().reshape(-1) if hasattr(column, "toarray") else np.asarray(column).reshape(-1)
-        cells = self._selected_cells(bounds, limit)
+        cells = self._selected_cells(bounds, limit, offset)
         index_by_id = {cell["id"]: index for index, cell in enumerate(self._cells)}
+        indices = [index_by_id[cell["id"]] for cell in cells]
+        column = table[indices, gene].X
+        values = column.toarray().reshape(-1) if hasattr(column, "toarray") else np.asarray(column).reshape(-1)
         return [
-            {"id": cell["id"], "x": cell["x"], "y": cell["y"], "value": int(values[index_by_id[cell["id"]]])}
-            for cell in cells
+            {"id": cell["id"], "x": cell["x"], "y": cell["y"], "value": int(value)}
+            for cell, value in zip(cells, values)
         ]
 
-    def get_overall_expression(self, *, bounds: dict | None = None, limit: int = MAX_POINTS) -> list[dict]:
+    def get_overall_expression(self, *, bounds: dict | None = None, limit: int = MAX_POINTS, offset: int = 0) -> list[dict]:
         return [
             {"id": cell["id"], "x": cell["x"], "y": cell["y"], "value": cell["total_counts"]}
-            for cell in self._selected_cells(bounds, limit)
+            for cell in self._selected_cells(bounds, limit, offset)
         ]
 
 
@@ -433,13 +440,13 @@ class RegisteredSpatialDatasetReader(SpatialDatasetReader):
     def _unavailable(self):
         raise SpatialDataError("This dataset is registered, but no compatible spatial reader is available.")
 
-    def get_coordinates(self, *, bounds: dict | None = None, limit: int = MAX_POINTS) -> list[dict]:
+    def get_coordinates(self, *, bounds: dict | None = None, limit: int = MAX_POINTS, offset: int = 0) -> list[dict]:
         self._unavailable()
 
-    def get_expression(self, gene: str, *, bounds: dict | None = None, limit: int = MAX_POINTS) -> list[dict]:
+    def get_expression(self, gene: str, *, bounds: dict | None = None, limit: int = MAX_POINTS, offset: int = 0) -> list[dict]:
         self._unavailable()
 
-    def get_overall_expression(self, *, bounds: dict | None = None, limit: int = MAX_POINTS) -> list[dict]:
+    def get_overall_expression(self, *, bounds: dict | None = None, limit: int = MAX_POINTS, offset: int = 0) -> list[dict]:
         self._unavailable()
 
 

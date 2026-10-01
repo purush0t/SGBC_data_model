@@ -5,7 +5,7 @@ from unittest.mock import patch
 from django.test import TestCase
 
 from .models import Entity, EntityInformationRecord, EntityType, InformationRecordType
-from .spatial import _scale_spatial_coordinates, _select_display_raster
+from .spatial import _spatial_dimensions
 
 
 class SpatialApiTests(TestCase):
@@ -30,6 +30,17 @@ class SpatialApiTests(TestCase):
         self.assertEqual(response.json()["count"], 9)
         self.assertTrue(all(point["x"] <= 25 for point in response.json()["points"]))
 
+    def test_spatial_api_supports_offset_pages(self):
+        response = self.client.get(
+            "/api/spatial/synthetic-demo/coordinates/",
+            {"limit": 10, "offset": 10},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["count"], 10)
+        self.assertEqual(response.json()["offset"], 10)
+        self.assertTrue(response.json()["has_more"])
+
     def test_invalid_gene_and_unbounded_limit_are_rejected(self):
         missing_gene = self.client.get(
             "/api/spatial/synthetic-demo/expression/", {"gene": "not-a-gene"}
@@ -41,14 +52,11 @@ class SpatialApiTests(TestCase):
         self.assertEqual(missing_gene.status_code, 400)
         self.assertEqual(too_many.status_code, 400)
 
-    def test_preview_raster_selection_and_coordinate_scaling(self):
-        coarse = type("Raster", (), {"sizes": {"x": 1024, "y": 512}})()
-        preview = type("Raster", (), {"sizes": {"x": 4096, "y": 2048}})()
-        full = type("Raster", (), {"sizes": {"x": 16384, "y": 8192}})()
+    def test_canvas_dimensions_follow_display_image_not_full_resolution_mask(self):
+        image = type("Raster", (), {"sizes": {"x": 1608, "y": 1608}})()
+        mask = type("Mask", (), {"shape": (6432, 6432)})()
 
-        self.assertIs(_select_display_raster([full, coarse, preview]), preview)
-        coordinates = _scale_spatial_coordinates([[400, 200]], full, preview)
-        self.assertEqual(coordinates.tolist(), [[100.0, 50.0]])
+        self.assertEqual(_spatial_dimensions(image, mask), (1608, 1608))
 
     def test_mouse_liver_demo_is_available_and_capable(self):
         response = self.client.get("/api/spatial/mouse_liver_demo/metadata/")

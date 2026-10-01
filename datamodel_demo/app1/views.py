@@ -145,8 +145,11 @@ def _spatial_reader(dataset_id):
 def _spatial_query(request):
     try:
         limit = int(request.GET.get("limit", MAX_POINTS))
+        offset = int(request.GET.get("offset", 0))
     except (TypeError, ValueError):
-        raise SpatialDataError("limit must be an integer.")
+        raise SpatialDataError("limit and offset must be integers.")
+    if offset < 0:
+        raise SpatialDataError("offset must be non-negative.")
     bounds = {}
     supplied_bounds = [request.GET.get(name) for name in ("xmin", "xmax", "ymin", "ymax")]
     if any(value is not None for value in supplied_bounds):
@@ -160,7 +163,7 @@ def _spatial_query(request):
             raise SpatialDataError("Spatial bounds must be finite.")
         if bounds["xmin"] > bounds["xmax"] or bounds["ymin"] > bounds["ymax"]:
             raise SpatialDataError("Minimum bounds must not exceed maximum bounds.")
-    return bounds or None, limit
+    return bounds or None, limit, offset
 
 
 def spatial_metadata(request, dataset_id):
@@ -199,11 +202,11 @@ def spatial_coordinates(request, dataset_id):
     if isinstance(reader, tuple):
         return reader[1]
     try:
-        bounds, limit = _spatial_query(request)
-        points = reader.get_coordinates(bounds=bounds, limit=limit)
+        bounds, limit, offset = _spatial_query(request)
+        points = reader.get_coordinates(bounds=bounds, limit=limit, offset=offset)
     except SpatialDataError as error:
         return JsonResponse({"error": str(error)}, status=400)
-    return JsonResponse({"points": points, "count": len(points)})
+    return JsonResponse({"points": points, "count": len(points), "offset": offset, "has_more": len(points) == limit})
 
 
 def spatial_expression(request, dataset_id):
@@ -215,8 +218,8 @@ def spatial_expression(request, dataset_id):
     if not gene and not overall:
         return JsonResponse({"error": "gene is required."}, status=400)
     try:
-        bounds, limit = _spatial_query(request)
-        points = reader.get_overall_expression(bounds=bounds, limit=limit) if overall else reader.get_expression(gene, bounds=bounds, limit=limit)
+        bounds, limit, offset = _spatial_query(request)
+        points = reader.get_overall_expression(bounds=bounds, limit=limit, offset=offset) if overall else reader.get_expression(gene, bounds=bounds, limit=limit, offset=offset)
     except SpatialDataError as error:
         return JsonResponse({"error": str(error)}, status=400)
     values = [point["value"] for point in points]
@@ -227,6 +230,8 @@ def spatial_expression(request, dataset_id):
         "gene": gene or "Overall expression",
         "points": points,
         "count": len(points),
+        "offset": offset,
+        "has_more": len(points) == limit,
         "scale": scale,
         "min": min(values) if values else 0,
         "max": max(values) if values else 0,

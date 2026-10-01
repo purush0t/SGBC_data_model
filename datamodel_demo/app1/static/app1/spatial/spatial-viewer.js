@@ -14,6 +14,20 @@
     if (!response.ok) throw new Error(data.error || 'Spatial request failed.');
     return data;
   });
+  const loadAllPages = async (pathForOffset) => {
+    const points = [];
+    let offset = 0;
+    while (true) {
+      const data = await api(pathForOffset(offset));
+      points.push(...data.points);
+      if (!data.has_more) return {points, scale: data.scale};
+      offset += data.count;
+    }
+  };
+  const expressionRange = (points) => points.reduce(
+    (range, point) => ({min: Math.min(range.min, point.value), max: Math.max(range.max, point.value)}),
+    {min: Infinity, max: -Infinity}
+  );
   const loadDatasetPicker = () => fetch('/api/spatial/').then(async (response) => {
     const data = await response.json();
     if (!response.ok) throw new Error(data.error || 'Could not load spatial datasets.');
@@ -135,14 +149,17 @@
       if (input.checked && layer.id === 'image') loadRaster('image');
     });
   };
-  const loadCoordinates = () => api('coordinates/?limit=50000').then(data => { state.points = data.points; $('#empty-state').classList.add('is-hidden'); setMessage(`${data.count} cells loaded`); fit(); }).catch(error => { $('#empty-state').textContent = error.message; setMessage(error.message, true); });
+  const loadCoordinates = () => loadAllPages(offset => `coordinates/?limit=50000&offset=${offset}`).then(data => { state.points = data.points; $('#empty-state').classList.add('is-hidden'); setMessage(`${data.points.length} cells loaded`); fit(); }).catch(error => { $('#empty-state').textContent = error.message; setMessage(error.message, true); });
   const loadExpression = () => {
     const gene = $('#gene-search').value.trim(); if (!gene) return;
     $('#gene-state').textContent = `Loading ${gene}...`;
-    api(`expression/?gene=${encodeURIComponent(gene)}&limit=50000`).then(data => {
-      state.gene = data.gene; state.expression = data.points; state.expressionRange = {min: data.min, max: data.max};
-      $('#expression-min').textContent = data.min; $('#expression-max').textContent = data.max;
-      $('#gene-state').textContent = `${data.gene} · ${data.count} cells · ${data.scale}`;
+    loadAllPages(offset => `expression/?gene=${encodeURIComponent(gene)}&limit=50000&offset=${offset}`).then(data => {
+      const range = expressionRange(data.points);
+      const minimum = Number.isFinite(range.min) ? range.min : 0;
+      const maximum = Number.isFinite(range.max) ? range.max : 0;
+      state.gene = gene; state.expression = data.points; state.expressionRange = {min: minimum, max: maximum};
+      $('#expression-min').textContent = minimum; $('#expression-max').textContent = maximum;
+      $('#gene-state').textContent = `${gene} · ${data.points.length} cells · ${data.scale || 'raw counts'}`;
       draw();
     }).catch(error => {
       state.expression = []; state.gene = null; $('#gene-state').textContent = error.message;
@@ -153,10 +170,13 @@
   };
   const loadOverallExpression = () => {
     $('#gene-state').textContent = 'Loading overall expression...';
-    api('expression/?overall=true&limit=50000').then(data => {
-      state.overallExpression = data.points; state.expressionRange = {min: data.min, max: data.max};
-      $('#expression-min').textContent = data.min; $('#expression-max').textContent = data.max;
-      $('#gene-state').textContent = `${data.count} cells · overall expression`;
+    loadAllPages(offset => `expression/?overall=true&limit=50000&offset=${offset}`).then(data => {
+      const range = expressionRange(data.points);
+      const minimum = Number.isFinite(range.min) ? range.min : 0;
+      const maximum = Number.isFinite(range.max) ? range.max : 0;
+      state.overallExpression = data.points; state.expressionRange = {min: minimum, max: maximum};
+      $('#expression-min').textContent = minimum; $('#expression-max').textContent = maximum;
+      $('#gene-state').textContent = `${data.points.length} cells · overall expression`;
       draw();
     }).catch(error => { state.overallExpression = []; $('#gene-state').textContent = error.message; draw(); });
   };
