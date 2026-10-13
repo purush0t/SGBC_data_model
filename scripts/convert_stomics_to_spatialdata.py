@@ -182,16 +182,38 @@ def main() -> None:
         if "cellID" not in table.obs:
             raise SystemExit("Imported table has no cellID column; cannot align expression and coordinates.")
         table.obs["cell_ID"] = table.obs["cellID"].astype(str)
-        annotation_column = next(
-            (column for column in ("cellTypeID", "clusterID") if column in table.obs),
-            None,
-        )
-        if annotation_column:
-            table.obs["annotation"] = (
-                table.obs[annotation_column].astype("string").fillna("Unannotated").astype(str)
+        annotation_columns = [
+            column for column in (
+                "cellType",
+                "cell_type",
+                "cellTypeName",
+                "cell_type_name",
+                "annotation",
+                "cellTypeID",
+                "clusterID",
+                "cluster",
+                "cluster_name",
+                "cluster_label",
             )
+            if column in table.obs
+        ]
+        candidate_annotation = None
+        for column in annotation_columns:
+            values = table.obs[column].astype("string").fillna("NA")
+            if values.empty:
+                continue
+            as_strings = values.map(lambda value: value.strip())
+            if as_strings.map(lambda value: bool(re.fullmatch(r"[-+]?\d+(?:\.\d+)?", value))).all():
+                continue
+            candidate_annotation = values.copy()
+            break
+        if candidate_annotation is not None:
+            table.obs["annotation"] = candidate_annotation.astype(str)
         else:
             table.obs["annotation"] = "Unannotated"
+        for cluster_column in ("clusterID", "cluster", "cluster_name", "cluster_label", "cellTypeID"):
+            if cluster_column in table.obs and "cluster" not in table.obs:
+                table.obs["cluster"] = table.obs[cluster_column].astype("string").fillna("NA").astype(str)
         spatial_data.tables["table"] = table
 
         if args.crop_bounds:

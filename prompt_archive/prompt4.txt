@@ -1,0 +1,148 @@
+I have an existing web application running in GitHub Codespaces that visualizes spatial gene expression data over tissue images.
+
+The viewer is already working. I want you to investigate and fix three specific issues while preserving all existing functionality.
+
+IMPORTANT WORKING RULES:
+- Inspect the existing code and data structures before making changes.
+- Investigate the root cause of each issue rather than applying superficial fixes.
+- You are authorized to make the necessary code changes directly. Do not stop after producing a report or ask for my approval before implementing changes.
+- Do not run the application, execute tests, or perform validation runs. I will run the application and test everything locally.
+- Do not install new dependencies, modify unrelated components, or refactor working code unnecessarily.
+- Preserve existing functionality, APIs, data formats, and compatibility with other datasets.
+- Make minimal, targeted, backward-compatible changes.
+- Do not overwrite, regenerate, or modify the original spatial datasets.
+- If an issue cannot be safely resolved with the information available, explain the limitation rather than introducing a speculative fix.
+- After implementation, provide a concise report describing the root causes, changes made, files modified, and anything I need to check locally. Do not run tests or claim that the changes have been tested.
+
+## Issue 1: Colored Expression Points Are Too Large
+
+The viewer displays colored points over a tissue image to represent gene expression levels in individual cells.
+
+Currently, the point size works well for the mouse liver dataset because its cells are relatively spread out.
+
+However, in the `test_out` dataset, the cells are smaller and more closely packed. The colored points appear too large and overlap, making it difficult to distinguish individual cells.
+
+Investigate the existing rendering implementation and determine the best way to handle this difference.
+
+Consider:
+- Reducing the default point size where appropriate.
+- Dynamically adjusting point size based on spatial cell density or the distribution of cell coordinates.
+- Using dataset-specific point sizes if this fits the existing architecture.
+- Accounting for zoom level if necessary to maintain visibility and readability.
+- Avoiding excessive overlap in densely packed regions.
+
+Do not assume that the total number of cells alone is a reliable indicator of the appropriate point size.
+
+Requirements:
+- Preserve the mouse liver dataset's current visual appearance as closely as possible.
+- Make the points appropriately sized for the denser `test_out` dataset.
+- Preserve the existing expression color mapping and visualization behavior.
+- Avoid unnecessary rendering changes or performance overhead.
+- Prefer a simple, robust solution that works with the existing viewer.
+
+Implement the most appropriate solution based on the current code.
+
+## Issue 2: Hover Tooltip Displays Numeric Values Instead of Cell Types
+
+When hovering over points in the mouse liver dataset, the viewer displays cell type information.
+
+However, when hovering over points in `test_out`, it displays a numeric value instead of a recognizable cell type.
+
+Investigate the tooltip implementation and compare the metadata structures of both datasets.
+
+Determine:
+1. Which metadata fields are currently used to populate the tooltip.
+2. What the numeric value in `test_out` actually represents.
+3. Whether it is a cell identifier, cluster label, internal index, encoded category, or another metadata field.
+4. Whether `test_out` contains cell type annotations.
+5. Whether the two datasets use different metadata schemas or field names.
+6. Whether the current implementation incorrectly assumes that a particular metadata field always contains cell type information.
+
+Implement a fix that handles the available metadata correctly.
+
+Requirements:
+- Preserve the existing mouse liver tooltip behavior.
+- Display the actual cell type when a valid cell type annotation is available.
+- If cell type annotations are unavailable, display meaningful available metadata, such as a valid cluster label or cell identifier.
+- Never interpret an unidentified numeric value as a cell type without evidence.
+- Handle missing metadata gracefully.
+- Avoid hardcoding dataset names or dataset-specific assumptions when a general solution is practical.
+
+Do not invent annotations or modify the original dataset to conceal missing metadata.
+
+## Issue 3: Ensembl Identifiers Are Displayed Instead of Gene Names
+
+The mouse liver dataset displays recognizable gene names, but the `test_out` dataset displays Ensembl gene identifiers.
+
+Investigate how gene identifiers are loaded, stored, processed, searched, and displayed in the existing application.
+
+Determine:
+1. Whether the mouse liver dataset already contains gene symbols while `test_out` contains Ensembl identifiers.
+2. Whether the application performs any gene identifier conversion during data loading or preprocessing.
+3. Whether gene metadata already contains gene symbols or other annotation fields.
+4. Whether Ensembl identifiers include version suffixes.
+5. Whether the gene expression matrix, gene metadata, search functionality, and visualization components use consistent identifiers.
+6. Whether the existing application supports gene symbol mapping.
+
+Based on the findings, implement the safest practical solution.
+
+Consider whether gene identifier mapping belongs in the data-loading layer, preprocessing pipeline, or viewer.
+
+Requirements:
+- Preserve the original gene identifiers as stable lookup keys wherever necessary.
+- Display gene symbols when reliable mappings are available.
+- Continue supporting datasets that already contain gene symbols.
+- Preserve gene search, selection, and expression lookup functionality.
+- Handle unmapped identifiers gracefully by falling back to the original identifier.
+- Avoid assuming that every Ensembl identifier has a unique gene symbol.
+- Do not introduce external dependencies or services unnecessarily.
+- Do not modify, overwrite, or regenerate the original datasets.
+
+If reliable mappings cannot be obtained from the repository's existing data or resources, implement only the safe changes that the available information supports and explain what additional annotation data would be required.
+
+## Investigation and Implementation Approach
+
+Before editing, inspect the relevant repository files to understand:
+- Spatial dataset loading and parsing.
+- Cell coordinates and metadata structures.
+- Tissue image rendering and point-size calculations.
+- Zoom and interaction handling.
+- Hover event and tooltip generation.
+- Gene metadata loading and identifier handling.
+- Gene search and expression lookup.
+- Existing preprocessing scripts, if available.
+
+Trace the data flow for both the mouse liver and `test_out` datasets.
+
+Use the actual code and available dataset structures to identify the root causes. Do not assume that similarly named fields have the same meaning across datasets.
+
+Once you understand the issues, implement the necessary changes directly.
+
+Keep the scope limited to the three issues described above.
+
+Do not:
+- Stop after analyzing the code.
+- Ask me to approve a proposed implementation.
+- Wait for permission to modify files.
+- Run the application or execute tests.
+- Install dependencies without a compelling reason.
+- Modify unrelated features.
+- Make speculative changes to the underlying datasets.
+
+If you discover that a required fix depends on unavailable data, explain the limitation and implement any safe improvements that remain possible.
+
+## Final Response
+
+After completing the code changes, provide a concise report containing:
+
+1. **Root causes:** What caused each of the three issues.
+2. **Changes made:** How each issue was addressed.
+3. **Files modified:** The files changed and the purpose of each change.
+4. **Data processing:** Whether any preprocessing changes are necessary or whether the fixes are handled within the application.
+5. **Local testing notes:** Any specific behavior, edge cases, or limitations I should check when I run the application locally.
+
+Do not run tests, execute the application, or claim that any changes have been validated.
+
+I will run the application and perform all testing locally.
+
+START NOW: Inspect the existing code, identify the root causes, and implement the necessary targeted changes directly.

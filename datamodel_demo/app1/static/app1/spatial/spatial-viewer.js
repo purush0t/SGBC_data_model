@@ -77,6 +77,17 @@
     image.onerror = () => setMessage(`Could not load ${layerId}.`, true);
     image.src = `/api/spatial/${datasetId}/${endpoint}/`;
   };
+  const displayLabel = (point) => {
+    const candidates = [point.annotation, point.cluster, point.id].filter(value => value !== undefined && value !== null && `${value}`.trim() !== '');
+    const label = candidates.find(value => !/^[-+]?((\d+\.?\d*)|(\.\d+))$/.test(`${value}`));
+    return label ?? point.id;
+  };
+  const pointRadius = () => {
+    if (!state.points.length || !state.metadata || !state.metadata.width || !state.metadata.height) return 5;
+    const averageSpacing = Math.sqrt((state.metadata.width * state.metadata.height) / state.points.length);
+    const densityScale = Math.max(0.45, Math.min(1.2, averageSpacing / 28));
+    return Math.max(2.2, Math.min(8.5, 7.3 * densityScale * Math.sqrt(state.view.scale)));
+  };
   const draw = () => {
     if (!state.metadata) return;
     const width = wrap.clientWidth, height = wrap.clientHeight;
@@ -96,7 +107,7 @@
       const position = toCanvas(point);
       const expression = layerEnabled('expression') ? overallExpressionById.get(point.id) : expressionById.get(point.id);
       const expressionVisible = Boolean(expression);
-      const radius = expressionVisible ? 7.3 * Math.sqrt(state.view.scale) : 5 + (state.view.scale * 1.5);
+      const radius = expressionVisible ? pointRadius() : Math.max(2.8, pointRadius() * .72);
       context.beginPath(); context.arc(position.x, position.y, radius, 0, Math.PI * 2);
       context.fillStyle = expressionVisible ? expressionColor(expression.value) : layerEnabled('cell_annotations') && point.annotation ? annotationColor(point.annotation) : layerEnabled('clusters') ? clusterColor(point.cluster) : '#a9b7bf';
       context.globalAlpha = state.opacity * (state.selected && state.selected.id !== point.id ? .3 : 1); context.fill();
@@ -120,16 +131,17 @@
   const fit = () => { if (!state.metadata) return; state.view.scale = 1; state.view.x = (wrap.clientWidth - state.metadata.width * scaleValue()) / 2; state.view.y = (wrap.clientHeight - state.metadata.height * scaleValue()) / 2; draw(); };
   const showSelection = (point) => {
     state.selected = point;
-    const label = point.annotation || point.cluster || 'Cell';
+    const label = displayLabel(point);
     $('#selection-readout').textContent = `${point.id} · ${label}`;
     const details = [`Cell ID: ${point.id}`, `X: ${point.x.toFixed(1)}`, `Y: ${point.y.toFixed(1)}`];
-    if (point.annotation) details.push(`Annotation: ${point.annotation}`);
+    if (point.annotation && !/^[-+]?((\d+\.?\d*)|(\.\d+))$/.test(`${point.annotation}`)) details.push(`Annotation: ${point.annotation}`);
+    if (point.cluster && !/^[-+]?((\d+\.?\d*)|(\.\d+))$/.test(`${point.cluster}`)) details.push(`Cluster: ${point.cluster}`);
     if (point.genes_detected !== undefined) details.push(`Genes detected: ${point.genes_detected}`);
     if (point.total_counts !== undefined) details.push(`Total counts: ${point.total_counts}`);
     $('#selection-details').textContent = details.join('\n');
     draw();
   };
-  const nearestPoint = (x, y) => state.points.reduce((nearest, point) => { const canvasPoint = toCanvas(point), distance = Math.hypot(canvasPoint.x - x, canvasPoint.y - y); return distance < nearest.distance ? {point, distance} : nearest; }, {point: null, distance: 15});
+  const nearestPoint = (x, y) => state.points.reduce((nearest, point) => { const canvasPoint = toCanvas(point), distance = Math.hypot(canvasPoint.x - x, canvasPoint.y - y); return distance < nearest.distance ? {point, distance} : nearest; }, {point: null, distance: 16});
   const renderLayers = () => {
     const container = $('#layers'); container.innerHTML = '';
     state.metadata.layers.forEach(layer => {
@@ -151,7 +163,8 @@
   };
   const loadCoordinates = () => loadAllPages(offset => `coordinates/?limit=50000&offset=${offset}`).then(data => { state.points = data.points; $('#empty-state').classList.add('is-hidden'); setMessage(`${data.points.length} cells loaded`); fit(); }).catch(error => { $('#empty-state').textContent = error.message; setMessage(error.message, true); });
   const loadExpression = () => {
-    const gene = $('#gene-search').value.trim(); if (!gene) return;
+    const rawGene = $('#gene-search').value.trim(); if (!rawGene) return;
+    const gene = resolveGeneQuery(rawGene);
     $('#gene-state').textContent = `Loading ${gene}...`;
     loadAllPages(offset => `expression/?gene=${encodeURIComponent(gene)}&limit=50000&offset=${offset}`).then(data => {
       const range = expressionRange(data.points);
@@ -159,7 +172,8 @@
       const maximum = Number.isFinite(range.max) ? range.max : 0;
       state.gene = gene; state.expression = data.points; state.expressionRange = {min: minimum, max: maximum};
       $('#expression-min').textContent = minimum; $('#expression-max').textContent = maximum;
-      $('#gene-state').textContent = `${gene} · ${data.points.length} cells · ${data.scale || 'raw counts'}`;
+      const displayGene = state.metadata?.gene_display_names?.[gene] || gene;
+      $('#gene-state').textContent = `${displayGene} · ${data.points.length} cells · ${data.scale || 'raw counts'}`;
       draw();
     }).catch(error => {
       state.expression = []; state.gene = null; $('#gene-state').textContent = error.message;
@@ -180,20 +194,28 @@
       draw();
     }).catch(error => { state.overallExpression = []; $('#gene-state').textContent = error.message; draw(); });
   };
+  const resolveGeneQuery = (gene) => {
+    const query = gene.trim();
+    if (!query) return query;
+    const displayNames = state.metadata?.gene_display_names || {};
+    const exactMatch = Object.entries(displayNames).find(([id, label]) => `${label}`.toLowerCase() === query.toLowerCase() || id.toLowerCase() === query.toLowerCase());
+    if (exactMatch) return exactMatch[0];
+    return query;
+  };
   const loadMetadata = () => api('metadata/').then(metadata => {
     state.metadata = metadata; state.bounds = {xmin: 0, xmax: metadata.width, ymin: 0, ymax: metadata.height};
     $('#dataset-name').textContent = metadata.name; $('#dataset-kind').textContent = metadata.synthetic ? 'synthetic' : metadata.platform || 'real data';
     $('#dataset-description').textContent = metadata.description;
     $('#dataset-stats').innerHTML = `<dt>Cells</dt><dd>${metadata.n_bins}</dd><dt>Genes</dt><dd>${metadata.n_genes}</dd><dt>Species</dt><dd>${metadata.species}</dd><dt>Resolution</dt><dd>${metadata.resolution}</dd>`;
-    const geneList = $('#gene-list'); geneList.replaceChildren(...metadata.genes.map(gene => { const option = document.createElement('option'); option.value = gene; return option; }));
+    const geneList = $('#gene-list'); const displayNames = metadata.gene_display_names || {}; geneList.replaceChildren(...metadata.genes.map(gene => { const option = document.createElement('option'); option.value = gene; option.textContent = displayNames[gene] || gene; return option; }));
     renderLayers(); return loadCoordinates();
   }).catch(error => { $('#empty-state').textContent = error.message; setMessage(error.message, true); });
   $('#gene-submit').addEventListener('click', loadExpression); $('#gene-search').addEventListener('keydown', event => { if (event.key === 'Enter') loadExpression(); });
   $('#layer-opacity').addEventListener('input', event => { state.opacity = Number(event.target.value) / 100; $('#opacity-value').value = `${event.target.value}%`; draw(); });
   $('#fit-view').addEventListener('click', fit); $('#reset-view').addEventListener('click', () => { state.view = {x: 0, y: 0, scale: 1}; fit(); });
   canvas.addEventListener('pointerdown', event => { state.drag = {x: event.clientX, y: event.clientY, viewX: state.view.x, viewY: state.view.y}; wrap.classList.add('is-dragging'); canvas.setPointerCapture(event.pointerId); });
-  canvas.addEventListener('pointermove', event => { const rect = canvas.getBoundingClientRect(), localX = event.clientX - rect.left, localY = event.clientY - rect.top; const coordinate = fromCanvas(localX, localY); $('#coordinate-readout').textContent = `x ${coordinate.x.toFixed(1)} · y ${coordinate.y.toFixed(1)}`; if (state.drag) { state.view.x = state.drag.viewX + event.clientX - state.drag.x; state.view.y = state.drag.viewY + event.clientY - state.drag.y; draw(); } else { const hit = nearestPoint(localX, localY); if (hit.point && hit.distance < 16) { $('#tooltip').hidden = false; $('#tooltip').style.left = `${localX + 14}px`; $('#tooltip').style.top = `${localY + 14}px`; $('#tooltip').textContent = `${hit.point.id} · ${hit.point.annotation || hit.point.cluster || 'Cell'}`; } else $('#tooltip').hidden = true; } });
-  canvas.addEventListener('pointerup', event => { if (state.drag) { const rect = canvas.getBoundingClientRect(), hit = nearestPoint(event.clientX - rect.left, event.clientY - rect.top); if (Math.hypot(event.clientX - state.drag.x, event.clientY - state.drag.y) < 5 && hit.point && hit.distance < 16) showSelection(hit.point); } state.drag = null; wrap.classList.remove('is-dragging'); });
+  canvas.addEventListener('pointermove', event => { const rect = canvas.getBoundingClientRect(), localX = event.clientX - rect.left, localY = event.clientY - rect.top; const coordinate = fromCanvas(localX, localY); $('#coordinate-readout').textContent = `x ${coordinate.x.toFixed(1)} · y ${coordinate.y.toFixed(1)}`; if (state.drag) { state.view.x = state.drag.viewX + event.clientX - state.drag.x; state.view.y = state.drag.viewY + event.clientY - state.drag.y; draw(); } else { const hit = nearestPoint(localX, localY); if (hit.point && hit.distance < pointRadius() + 10) { $('#tooltip').hidden = false; $('#tooltip').style.left = `${localX + 14}px`; $('#tooltip').style.top = `${localY + 14}px`; $('#tooltip').textContent = `${hit.point.id} · ${displayLabel(hit.point)}`; } else $('#tooltip').hidden = true; } });
+  canvas.addEventListener('pointerup', event => { if (state.drag) { const rect = canvas.getBoundingClientRect(), hit = nearestPoint(event.clientX - rect.left, event.clientY - rect.top); if (Math.hypot(event.clientX - state.drag.x, event.clientY - state.drag.y) < 5 && hit.point && hit.distance < pointRadius() + 10) showSelection(hit.point); } state.drag = null; wrap.classList.remove('is-dragging'); });
   canvas.addEventListener('wheel', event => { event.preventDefault(); const rect = canvas.getBoundingClientRect(), before = fromCanvas(event.clientX - rect.left, event.clientY - rect.top); state.view.scale = Math.max(.35, Math.min(8, state.view.scale * (event.deltaY < 0 ? 1.12 : .89))); const after = toCanvas(before); state.view.x += event.clientX - rect.left - after.x; state.view.y += event.clientY - rect.top - after.y; draw(); }, {passive: false});
   window.addEventListener('resize', resize); resize(); loadDatasetPicker(); loadMetadata();
 })();

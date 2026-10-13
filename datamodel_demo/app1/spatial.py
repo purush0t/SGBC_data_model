@@ -215,6 +215,96 @@ class SpatialDataZarrReader(SpatialDatasetReader):
             key=lambda raster: raster.sizes["x"] * raster.sizes["y"],
         )
 
+    @staticmethod
+    def _string_value(value) -> str | None:
+        if value is None or (isinstance(value, float) and np.isnan(value)):
+            return None
+        text = str(value).strip()
+        if not text or text.lower() in {"nan", "none", "null", "na", "n/a", "unannotated"}:
+            return None
+        return text
+
+    @classmethod
+    def _annotation_value(cls, observation: dict) -> str | None:
+        candidates = (
+            "annotation",
+            "cell_type",
+            "cellType",
+            "celltype",
+            "cell_type_name",
+            "cellTypeName",
+            "cell_type_label",
+            "cluster_label",
+            "cluster_name",
+        )
+        for column in candidates:
+            value = cls._string_value(observation.get(column))
+            if value is None:
+                continue
+            if re.fullmatch(r"[-+]?(?:\d+(?:\.\d*)?|\.\d+)", value):
+                continue
+            return value
+        return None
+
+    @classmethod
+    def _cluster_value(cls, observation: dict) -> str | None:
+        candidates = (
+            "cluster",
+            "cluster_name",
+            "cluster_label",
+            "leiden",
+            "cell_cluster",
+            "cell_cluster_label",
+            "annotation",
+            "cell_type",
+            "cellType",
+            "celltype",
+        )
+        for column in candidates:
+            value = cls._string_value(observation.get(column))
+            if value is None:
+                continue
+            return value
+        return None
+
+    def _gene_display_names(self) -> dict[str, str]:
+        var = self._table.var
+        mapping = {str(gene): str(gene) for gene in self._table.var_names}
+        if not hasattr(var, "columns"):
+            return mapping
+        for column in ("gene_symbol", "symbol", "gene_name", "geneName", "feature_symbol", "feature_name", "gene_symbols"):
+            if column not in var.columns:
+                continue
+            labels = var[column].astype("string")
+            for gene, label in zip(self._table.var_names, labels):
+                display = self._string_value(label)
+                if display is None or str(gene) == display:
+                    continue
+                mapping[str(gene)] = display
+        return mapping
+
+    def _resolve_gene(self, gene: str) -> str:
+        target = str(gene).strip()
+        if not target:
+            return target
+        if target in self._table.var_names:
+            return target
+        normalized = re.sub(r"\.\d+$", "", target).lower()
+        matches = []
+        for var_name in self._table.var_names:
+            if re.sub(r"\.\d+$", "", str(var_name)).lower() == normalized:
+                matches.append(str(var_name))
+        if len(matches) == 1:
+            return matches[0]
+        for gene_id, display_name in self._gene_display_names().items():
+            if gene_id == target:
+                return gene_id
+            if re.sub(r"\.\d+$", "", str(display_name)).lower() == normalized:
+                matches.append(gene_id)
+        if len(matches) == 1:
+            return matches[0]
+        return target
+
     @cached_property
     def _cells(self):
         table = self._table
@@ -234,11 +324,16 @@ class SpatialDataZarrReader(SpatialDatasetReader):
             totals = matrix.sum(axis=1)
         cells = []
         for index, observation in table.obs.reset_index(drop=True).iterrows():
+            annotation = self._annotation_value(observation.to_dict())
+            cluster = self._cluster_value(observation.to_dict())
+            if annotation is None and cluster is not None:
+                annotation = cluster
             cells.append({
                 "id": str(observation["cell_ID"]),
                 "x": float(coordinates[index, 0]),
                 "y": float(coordinates[index, 1]),
-                "annotation": str(observation["annotation"]),
+                "annotation": annotation,
+                "cluster": cluster if cluster and cluster != annotation else None,
                 "genes_detected": int(detected[index]),
                 "total_counts": int(totals[index]),
             })
@@ -258,6 +353,7 @@ class SpatialDataZarrReader(SpatialDatasetReader):
                 "n_bins": 0,
                 "n_genes": 0,
                 "genes": [],
+                "gene_display_names": {},
                 "layers": [
                     {"id": layer_id, "name": layer_name, "available": False}
                     for layer_id, layer_name in (
@@ -310,6 +406,7 @@ class SpatialDataZarrReader(SpatialDatasetReader):
             "clusters": False,
             "umap": False,
         }
+        gene_display_names = self._gene_display_names()
         return {
             "id": self.dataset_id,
             "name": self.name,
@@ -322,6 +419,7 @@ class SpatialDataZarrReader(SpatialDatasetReader):
             "n_bins": int(table.n_obs),
             "n_genes": int(table.n_vars),
             "genes": [str(gene) for gene in table.var_names],
+            "gene_display_names": gene_display_names,
             "layers": [
                 {
                     "id": layer_id,
@@ -411,6 +509,7 @@ class SpatialDataZarrReader(SpatialDatasetReader):
     def get_expression(self, gene: str, *, bounds: dict | None = None, limit: int = MAX_POINTS, offset: int = 0) -> list[dict]:
         self._validate_query(bounds, limit, offset)
         table = self._table
+        gene = self._resolve_gene(gene)
         if gene not in table.var_names:
             raise SpatialDataError(f"Gene {gene!r} was not found in this dataset.")
         cells = self._selected_cells(bounds, limit, offset)
