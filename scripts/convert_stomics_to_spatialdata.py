@@ -150,9 +150,12 @@ def main() -> None:
         staging = Path(temporary)
         register = staging / "03.register"
         cellcut = staging / "041.cellcut"
+        tissuecut = staging / "04.tissuecut"
         cellcluster = staging / "051.cellcluster"
         register.mkdir()
         cellcut.mkdir()
+        # spatialdata-io inspects this directory even when square-bin reading is disabled.
+        tissuecut.mkdir()
         cellcluster.mkdir()
 
         if visualization_archive:
