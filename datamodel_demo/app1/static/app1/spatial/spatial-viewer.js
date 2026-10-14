@@ -4,7 +4,7 @@
   const wrap = document.querySelector('#canvas-wrap');
   const context = canvas.getContext('2d');
   const state = {
-    metadata: null, points: [], expression: [], overallExpression: [], gene: null, selected: null,
+    metadata: null, points: [], nearestSpacing: null, expression: [], overallExpression: [], gene: null, selected: null,
     view: {x: 0, y: 0, scale: 1}, drag: null, bounds: {xmin: 0, xmax: 100, ymin: 0, ymax: 100},
     rasters: {}, opacity: .85, expressionRange: {min: 0, max: 1}
   };
@@ -82,11 +82,28 @@
     const label = candidates.find(value => !/^[-+]?((\d+\.?\d*)|(\.\d+))$/.test(`${value}`));
     return label ?? point.id;
   };
+  const estimateNearestSpacing = (points) => {
+    if (points.length < 2) return null;
+    const sampleCount = Math.min(points.length, 128);
+    const nearestDistances = [];
+    for (let sample = 0; sample < sampleCount; sample += 1) {
+      const point = points[Math.floor(sample * points.length / sampleCount)];
+      let nearest = Infinity;
+      for (const candidate of points) {
+        if (candidate === point) continue;
+        const distance = Math.hypot(point.x - candidate.x, point.y - candidate.y);
+        if (distance < nearest) nearest = distance;
+      }
+      if (Number.isFinite(nearest)) nearestDistances.push(nearest);
+    }
+    nearestDistances.sort((a, b) => a - b);
+    return nearestDistances.length ? nearestDistances[Math.floor(nearestDistances.length / 2)] : null;
+  };
   const pointRadius = () => {
-    if (!state.points.length || !state.metadata || !state.metadata.width || !state.metadata.height) return 5;
-    const averageSpacing = Math.sqrt((state.metadata.width * state.metadata.height) / state.points.length);
-    const densityScale = Math.max(0.45, Math.min(1.2, averageSpacing / 28));
-    return Math.max(2.2, Math.min(8.5, 7.3 * densityScale * Math.sqrt(state.view.scale)));
+    const defaultRadius = 7.3 * Math.sqrt(state.view.scale);
+    if (!state.nearestSpacing) return defaultRadius;
+    const spacingInCanvasPixels = state.nearestSpacing * scaleValue();
+    return Math.min(defaultRadius, Math.max(2, spacingInCanvasPixels * .85));
   };
   const draw = () => {
     if (!state.metadata) return;
@@ -161,7 +178,7 @@
       if (input.checked && layer.id === 'image') loadRaster('image');
     });
   };
-  const loadCoordinates = () => loadAllPages(offset => `coordinates/?limit=50000&offset=${offset}`).then(data => { state.points = data.points; $('#empty-state').classList.add('is-hidden'); setMessage(`${data.points.length} cells loaded`); fit(); }).catch(error => { $('#empty-state').textContent = error.message; setMessage(error.message, true); });
+  const loadCoordinates = () => loadAllPages(offset => `coordinates/?limit=50000&offset=${offset}`).then(data => { state.points = data.points; state.nearestSpacing = estimateNearestSpacing(data.points); $('#empty-state').classList.add('is-hidden'); setMessage(`${data.points.length} cells loaded`); fit(); }).catch(error => { $('#empty-state').textContent = error.message; setMessage(error.message, true); });
   const loadExpression = () => {
     const rawGene = $('#gene-search').value.trim(); if (!rawGene) return;
     const gene = resolveGeneQuery(rawGene);
