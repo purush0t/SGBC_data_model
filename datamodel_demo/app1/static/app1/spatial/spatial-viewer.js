@@ -63,14 +63,14 @@
     : {x: state.view.x + point.x * scaleValue(), y: state.view.y + point.y * scaleValue()};
   const fromCanvas = (x, y) => {
     if (state.viewer?.world?.getItemCount()) {
-      const pixel = new OpenSeadragon.Point(x, y);
-      return state.viewer.viewport.viewportToImageCoordinates(state.viewer.viewport.pointFromPixel(pixel, true));
+      const viewportPoint = state.viewer.viewport.pointFromPixel(new OpenSeadragon.Point(x, y), true);
+      return state.viewer.viewport.viewportToImageCoordinates(viewportPoint.x, viewportPoint.y);
     }
     return {x: (x - state.view.x) / scaleValue(), y: (y - state.view.y) / scaleValue()};
   };
   const viewerTransform = () => {
     const viewport = state.viewer.viewport;
-    const toPixel = (x, y) => viewport.pixelFromPoint(viewport.imageToViewportCoordinates(new OpenSeadragon.Point(x, y)), true);
+    const toPixel = (x, y) => viewport.pixelFromPoint(viewport.imageToViewportCoordinates(x, y), true);
     const origin = toPixel(0, 0), xAxis = toPixel(1, 0), yAxis = toPixel(0, 1);
     return {x: origin.x, y: origin.y, scaleX: xAxis.x - origin.x, scaleY: yAxis.y - origin.y};
   };
