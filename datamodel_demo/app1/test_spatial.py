@@ -5,7 +5,7 @@ from unittest.mock import patch
 from django.test import TestCase
 
 from .models import Entity, EntityInformationRecord, EntityType, InformationRecordType
-from .spatial import _spatial_dimensions
+from .spatial import _spatial_dimensions, get_reader
 
 
 class SpatialApiTests(TestCase):
@@ -78,12 +78,15 @@ class SpatialApiTests(TestCase):
             (test_store / "zarr.json").write_text("{}", encoding="utf-8")
             with patch("app1.spatial._spatial_data_directory", return_value=Path(temporary_directory)):
                 response = self.client.get("/api/spatial/")
+                first_reader = get_reader("test_out")
+                second_reader = get_reader("test_out")
 
         self.assertEqual(response.status_code, 200)
         test_store = next(
             dataset for dataset in response.json()["datasets"] if dataset["id"] == "test_out"
         )
         self.assertTrue(test_store["reader_available"])
+        self.assertIs(first_reader, second_reader)
 
     def test_provenance_metadata_registers_unavailable_dataset_explicitly(self):
         entity = Entity.objects.create(entity_type=self.entity_type, identifier="matrix-001")
