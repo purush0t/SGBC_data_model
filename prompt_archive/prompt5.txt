@@ -1,0 +1,29 @@
+The current viewer works well, but Copilot Agentic has decided to rebuild it from scratch. Stop reinventing the viewer and improve the existing implementation instead.
+
+1. Viewer Implementation and Performance
+- Inspect the existing viewer and understand how it works before making any changes.
+- Preserve the current implementation wherever possible. Do not rebuild the viewer from scratch.
+- Use a proven, efficient image-viewing library if the current implementation needs improvement. Options include OpenSeadragon (https://openseadragon.github.io/) and OpenLayers (https://openlayers.org/), but choose whichever solution best fits the existing application and its requirements.
+- Prioritize smooth rendering, efficient image loading, responsive interactions, and a good user experience.
+
+2. Concurrent Data Loading
+- Inspect the Network tab in browser DevTools to understand how the viewer's data and resources are currently loaded.
+- Optimize loading so independent requests and resources load concurrently rather than unnecessarily waiting for one another.
+- Eliminate avoidable sequential loading, redundant requests, and unnecessary rendering delays.
+- Ensure images and other required resources load efficiently, with appropriate caching and loading strategies where applicable.
+- Maintain a responsive user experience while data is loading. Avoid blocking the viewer unnecessarily.
+
+3. Preserve Existing Functionality
+- Do not break any existing features, interactions, integrations, or workflows.
+- Reuse the existing components, state management, APIs, and architecture wherever practical.
+- Avoid unnecessary dependencies, architectural changes, or unrelated refactoring.
+- Ensure the optimized viewer behaves consistently with the current implementation.
+
+4. Validation
+- Test the existing viewer's functionality after making changes.
+- Verify concurrent loading through browser DevTools and confirm that independent requests are not unnecessarily serialized.
+- Check for regressions, console errors, failed requests, and performance issues.
+- Compare the updated implementation with the original to ensure that performance improvements do not come at the expense of functionality.
+
+IMPORTANT:
+First inspect and understand the existing implementation, then make targeted improvements. Do not replace working code simply to introduce a new library or architecture. Choose the simplest, most effective solution that improves viewer performance and loading behavior while preserving every existing feature.
