@@ -128,7 +128,6 @@
       context.beginPath(); context.arc(position.x, position.y, radius, 0, Math.PI * 2);
       context.fillStyle = expressionVisible ? expressionColor(expression.value) : layerEnabled('cell_annotations') && point.annotation ? annotationColor(point.annotation) : layerEnabled('clusters') ? clusterColor(point.cluster) : '#a9b7bf';
       context.globalAlpha = state.opacity * (state.selected && state.selected.id !== point.id ? .3 : 1); context.fill();
-      if (expressionVisible) { context.globalAlpha *= .7; context.strokeStyle = '#f0f4ed'; context.lineWidth = 1; context.stroke(); }
       if (state.selected && state.selected.id === point.id) { context.globalAlpha = 1; context.strokeStyle = '#f2bb62'; context.lineWidth = 2; context.stroke(); }
     });
     context.globalAlpha = 1;

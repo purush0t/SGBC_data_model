@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from functools import cached_property
 from io import BytesIO
 from math import exp
 import os
 from pathlib import Path
 import re
+from threading import Lock
 
 import numpy as np
 
@@ -173,23 +174,33 @@ class SpatialDataZarrReader(SpatialDatasetReader):
     description: str
     species: str
     platform: str
+    _data_lock: Lock = field(default_factory=Lock, init=False, repr=False, compare=False)
 
-    @cached_property
+    @property
     def _data(self):
-        if not self.data_path.is_dir():
-            raise SpatialDatasetUnavailable(
-                f"The SpatialData store for {self.dataset_id!r} is missing at {self.data_path}."
-            )
-        try:
-            import spatialdata
-        except ImportError as error:
-            raise SpatialDatasetUnavailable(
-                "Install the optional SpatialData dependency to read this dataset."
-            ) from error
-        try:
-            return spatialdata.read_zarr(str(self.data_path))
-        except Exception as error:
-            raise SpatialDatasetUnavailable(f"Could not read the SpatialData store: {error}") from error
+        data = self.__dict__.get("_loaded_data")
+        if data is not None:
+            return data
+        with self._data_lock:
+            data = self.__dict__.get("_loaded_data")
+            if data is not None:
+                return data
+            if not self.data_path.is_dir():
+                raise SpatialDatasetUnavailable(
+                    f"The SpatialData store for {self.dataset_id!r} is missing at {self.data_path}."
+                )
+            try:
+                import spatialdata
+            except ImportError as error:
+                raise SpatialDatasetUnavailable(
+                    "Install the optional SpatialData dependency to read this dataset."
+                ) from error
+            try:
+                data = spatialdata.read_zarr(str(self.data_path))
+            except Exception as error:
+                raise SpatialDatasetUnavailable(f"Could not read the SpatialData store: {error}") from error
+            self.__dict__["_loaded_data"] = data
+            return data
 
     @cached_property
     def _table(self):
@@ -560,6 +571,7 @@ _READERS = {
         "Molecular Cartography",
     ),
 }
+_ZARR_READER_CACHE: dict[str, SpatialDataZarrReader] = {}
 
 
 def _zarr_readers() -> dict[str, SpatialDataZarrReader]:
@@ -619,11 +631,20 @@ def _registered_readers() -> dict[str, RegisteredSpatialDatasetReader]:
 
 
 def get_reader(dataset_id: str) -> SpatialDatasetReader:
-    readers = {**_READERS, **_zarr_readers(), **_registered_readers()}
-    try:
-        return readers[dataset_id]
-    except KeyError as error:
-        raise SpatialDataError("Dataset is unavailable or has no registered reader.") from error
+    reader = _READERS.get(dataset_id)
+    if reader is not None:
+        return reader
+    reader = _ZARR_READER_CACHE.get(dataset_id)
+    if reader is not None and reader.data_path.is_dir():
+        return reader
+    _ZARR_READER_CACHE.pop(dataset_id, None)
+    reader = _zarr_readers().get(dataset_id)
+    if reader is not None:
+        return _ZARR_READER_CACHE.setdefault(dataset_id, reader)
+    reader = _registered_readers().get(dataset_id)
+    if reader is None:
+        raise SpatialDataError("Dataset is unavailable or has no registered reader.")
+    return reader
 
 
 def list_datasets() -> list[dict]:
