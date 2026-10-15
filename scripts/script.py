@@ -1,0 +1,211 @@
+#!/usr/bin/env python3
+"""Convert STOmics SAW cell-bin outputs into a viewer-ready SpatialData Zarr."""
+
+from __future__ import annotations
+
+import argparse
+from pathlib import Path
+import shutil
+import tarfile
+import tempfile
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--cellbin-gef", required=True, type=Path)
+    h5ad_source = parser.add_mutually_exclusive_group(required=True)
+    h5ad_source.add_argument("--cell-cluster-h5ad", type=Path)
+    h5ad_source.add_argument("--visualization-archive", type=Path)
+    parser.add_argument("--registered-tif", required=True, type=Path)
+    parser.add_argument("--dataset-id", default="C04042E3")
+    parser.add_argument(
+        "--output",
+        type=Path,
+        default=Path(__file__).resolve().parents[1]
+        / "datamodel_demo/data/spatial/stomics_c04042e3.zarr",
+        help="Destination Zarr directory (defaults to the app's configured STomics path)",
+    )
+    return parser.parse_args()
+
+
+def checked_file(path: Path, label: str) -> Path:
+    resolved = path.expanduser().resolve()
+    if not resolved.is_file():
+        raise SystemExit(f"{label} is not a file: {resolved}")
+    return resolved
+
+
+def extract_cell_cluster_h5ad(archive_path: Path, destination: Path) -> Path:
+    try:
+        with tarfile.open(archive_path, mode="r:*") as archive:
+            matches = [
+                member
+                for member in archive.getmembers()
+                if member.isfile() and Path(member.name).name.endswith("cell.cluster.h5ad")
+            ]
+            if len(matches) != 1:
+                raise SystemExit(
+                    "Expected exactly one *cell.cluster.h5ad in the visualization archive; "
+                    f"found {len(matches)}. Export the cell.cluster.h5ad separately and pass "
+                    "--cell-cluster-h5ad."
+                )
+            source = archive.extractfile(matches[0])
+            if source is None:
+                raise SystemExit("Could not read cell.cluster.h5ad from the visualization archive.")
+            with source, destination.open("wb") as output:
+                shutil.copyfileobj(source, output)
+    except (OSError, tarfile.TarError) as error:
+        raise SystemExit(f"Could not read visualization archive {archive_path}: {error}") from error
+    return destination
+
+
+GEF_OBS_COLUMNS = (
+    "cellID",
+    "offset",
+    "geneCount",
+    "expCount",
+    "dnbCount",
+    "area",
+    "cellTypeID",
+    "clusterID",
+    "cellExon",
+)
+GEF_VAR_COLUMNS = ("geneName", "offset", "cellCount", "expCount", "maxMIDcount", "geneExon")
+
+
+def restage_cell_cluster_h5ad(source: Path, destination: Path) -> None:
+    """Write a cluster H5AD stripped of the columns the reader re-derives from the GEF.
+
+    The stereoseq reader merges the cell-bin GEF tables into the cluster H5AD by
+    index. Any overlapping obs/var column gets suffixed (``area_x``/``area_y``),
+    so the reader's later lookups of ``area`` and friends fail. Dropping the
+    duplicates keeps the merge one-to-one and preserves the original values.
+    """
+    import anndata as ad
+
+    adata = ad.read_h5ad(source)
+    overlapping_obs = [column for column in adata.obs.columns if column in GEF_OBS_COLUMNS]
+    overlapping_var = [column for column in adata.var.columns if column in GEF_VAR_COLUMNS]
+    if not overlapping_obs and not overlapping_var:
+        destination.symlink_to(source)
+        return
+    adata.obs.drop(columns=overlapping_obs, inplace=True)
+    adata.var.drop(columns=overlapping_var, inplace=True)
+    adata.write_h5ad(destination)
+
+
+def restage_registered_tif(source: Path, destination: Path) -> None:
+    """Rewrite the registered TIFF as a channel-first (c, y, x) pyramid.
+
+    STOmics exports the registered image as a planar RGB series (y, x, c), but
+    spatialdata-io's stereoseq reader parses register images with dims
+    ("c", "y", "x"). dask_image.imread therefore hands it a rank-4 array and the
+    model parse fails. Writing the channels as separate samples makes imread
+    return (c, y, x), which is what the reader expects.
+    """
+    import numpy as np
+    import tifffile
+
+    with tifffile.TiffFile(source) as handle:
+        series = handle.series[0]
+        axes = series.axes
+        if axes[-1] not in ("S", "X"):
+            destination.symlink_to(source)
+            return
+        data = series.asarray()
+        if data.ndim == 2:
+            data = data[np.newaxis, ...]
+        else:
+            data = np.moveaxis(data, -1, 0)
+        tifffile.imwrite(destination, data, photometric="minisblack", tile=(1024, 1024))
+
+
+def main() -> None:
+    args = parse_args()
+    cellbin_gef = checked_file(args.cellbin_gef, "Cell-bin GEF")
+    registered_tif = checked_file(args.registered_tif, "Registered TIFF")
+    visualization_archive = None
+    if args.cell_cluster_h5ad:
+        cell_cluster_h5ad = checked_file(args.cell_cluster_h5ad, "Cell-cluster H5AD")
+    else:
+        visualization_archive = checked_file(args.visualization_archive, "Visualization archive")
+    output = args.output.expanduser().resolve()
+    if output.exists():
+        raise SystemExit(f"Output already exists; choose a new path: {output}")
+
+    try:
+        from spatialdata_io import stereoseq
+    except ImportError as error:
+        raise SystemExit("Install the project requirements, including spatialdata-io, to convert GEF files.") from error
+
+    dataset_id = args.dataset_id.strip()
+    if not dataset_id or "/" in dataset_id or "\\" in dataset_id:
+        raise SystemExit("Dataset ID must be a non-empty filename-safe value.")
+
+    output.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="stomics-spatialdata-") as temporary:
+        staging = Path(temporary)
+        register = staging / "03.register"
+        tissuecut = staging / "04.tissuecut"
+        cellcut = staging / "041.cellcut"
+        cellcluster = staging / "051.cellcluster"
+        register.mkdir()
+        tissuecut.mkdir()
+        cellcut.mkdir()
+        cellcluster.mkdir()
+
+        if visualization_archive:
+            extract_cell_cluster_h5ad(
+                visualization_archive,
+                cellcluster / f"{dataset_id}.cell.cluster.h5ad",
+            )
+        else:
+            restage_cell_cluster_h5ad(cell_cluster_h5ad, cellcluster / f"{dataset_id}.cell.cluster.h5ad")
+        restage_registered_tif(registered_tif, register / f"{dataset_id}_HE_regist.tif")
+        (cellcut / f"{dataset_id}.cellbin.gef").symlink_to(cellbin_gef)
+
+        spatial_data = stereoseq(
+            staging,
+            dataset_id=dataset_id,
+            read_square_bin=False,
+        )
+
+        image_key = f"{dataset_id}_HE_regist"
+        if image_key not in spatial_data.images:
+            raise SystemExit(f"STOmics importer did not produce the registered image {image_key!r}.")
+        spatial_data.images["raw_image"] = spatial_data.images.pop(image_key)
+
+        if "cells_table" not in spatial_data.tables:
+            raise SystemExit("STOmics importer did not produce its cell expression table.")
+        table = spatial_data.tables.pop("cells_table")
+        if "cellID" not in table.obs:
+            raise SystemExit("Imported table has no cellID column; cannot align expression and coordinates.")
+        # The GEF ``cell`` dataset stores a zero-based row counter in ``cellID``,
+        # so the real STOmics barcode lives in the cluster H5AD's obs index. Prefer
+        # that index and only fall back to ``cellID`` when it is not a plain counter.
+        if table.obs.index.is_unique and table.obs.index.astype(str).str.fullmatch(r"\d{6,}").all():
+            table.obs["cell_ID"] = table.obs.index.astype(str)
+        else:
+            table.obs["cell_ID"] = table.obs["cellID"].astype(str)
+
+        # ``cellTypeID`` is a constant in many GEFs (STOmics writes a single
+        # ``default`` type), so picking it first would collapse every cell into one
+        # label. Choose the first candidate that actually varies.
+        for column in ("cellTypeID", "clusterID", "leiden"):
+            if column not in table.obs:
+                continue
+            values = table.obs[column].astype("string").fillna("Unannotated").astype(str)
+            if values.nunique() > 1:
+                table.obs["annotation"] = values
+                break
+        else:
+            table.obs["annotation"] = "Unannotated"
+        spatial_data.tables["table"] = table
+
+        spatial_data.write(output)
+
+    print(f"Viewer-ready SpatialData written to {output}")
+
+
+if __name__ == "__main__":
+    main()
