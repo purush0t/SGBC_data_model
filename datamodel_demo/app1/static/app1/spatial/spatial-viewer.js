@@ -119,6 +119,10 @@
       setMessage('Tissue image tiles loaded');
     });
     state.viewer.addHandler('open-failed', loadFullImageFallback);
+    state.viewer.addHandler('tile-load-failed', () => {
+      setMessage('Image tile failed; loading the full image instead.', true);
+      loadFullImageFallback();
+    });
     state.viewer.addHandler('animation', draw);
     state.viewer.addHandler('zoom', () => {
       state.view.scale = state.viewer.viewport.getZoom() / state.viewer.viewport.getHomeZoom();
