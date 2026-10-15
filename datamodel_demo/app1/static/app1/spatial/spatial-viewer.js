@@ -6,7 +6,7 @@
   const state = {
     metadata: null, points: [], coordinatesLoaded: false, nearestSpacing: null, expression: [], overallExpression: [], gene: null, selected: null,
     view: {x: 0, y: 0, scale: 1}, drag: null, bounds: {xmin: 0, xmax: 100, ymin: 0, ymax: 100},
-    rasters: {}, opacity: .85, expressionRange: {min: 0, max: 1}
+    rasters: {}, viewer: null, transform: null, imageVisible: true, opacity: .85, expressionRange: {min: 0, max: 1}
   };
   const $ = (selector) => document.querySelector(selector);
   const api = (path) => fetch(`/api/spatial/${datasetId}/${path}`).then(async (response) => {
@@ -57,9 +57,23 @@
     $('#canvas-state').textContent = message;
     $('#canvas-state').style.color = error ? '#ed705d' : '';
   };
-  const scaleValue = () => Math.min(wrap.clientWidth / state.metadata.width, wrap.clientHeight / state.metadata.height) * state.view.scale;
-  const toCanvas = (point) => ({x: state.view.x + point.x * scaleValue(), y: state.view.y + point.y * scaleValue()});
-  const fromCanvas = (x, y) => ({x: (x - state.view.x) / scaleValue(), y: (y - state.view.y) / scaleValue()});
+  const scaleValue = () => state.transform?.scaleX || Math.min(wrap.clientWidth / state.metadata.width, wrap.clientHeight / state.metadata.height) * state.view.scale;
+  const toCanvas = (point) => state.transform
+    ? {x: state.transform.x + point.x * state.transform.scaleX, y: state.transform.y + point.y * state.transform.scaleY}
+    : {x: state.view.x + point.x * scaleValue(), y: state.view.y + point.y * scaleValue()};
+  const fromCanvas = (x, y) => {
+    if (state.viewer?.world?.getItemCount()) {
+      const pixel = new OpenSeadragon.Point(x, y);
+      return state.viewer.viewport.viewportToImageCoordinates(state.viewer.viewport.pointFromPixel(pixel, true));
+    }
+    return {x: (x - state.view.x) / scaleValue(), y: (y - state.view.y) / scaleValue()};
+  };
+  const viewerTransform = () => {
+    const viewport = state.viewer.viewport;
+    const toPixel = (x, y) => viewport.pixelFromPoint(viewport.imageToViewportCoordinates(new OpenSeadragon.Point(x, y)), true);
+    const origin = toPixel(0, 0), xAxis = toPixel(1, 0), yAxis = toPixel(0, 1);
+    return {x: origin.x, y: origin.y, scaleX: xAxis.x - origin.x, scaleY: yAxis.y - origin.y};
+  };
   const resize = () => { const ratio = window.devicePixelRatio || 1; canvas.width = wrap.clientWidth * ratio; canvas.height = wrap.clientHeight * ratio; context.setTransform(ratio, 0, 0, ratio, 0, 0); draw(); };
   const layerEnabled = (layerId) => $(`#layers input[data-layer="${layerId}"]`)?.checked || false;
   const syncLayerStatus = (input) => {
@@ -69,13 +83,88 @@
       status.dataset.state = input.checked ? 'on' : 'off';
     }
   };
+  const updateImageVisibility = () => {
+    const item = state.viewer?.world?.getItemAt(0);
+    if (item) item.setOpacity(state.imageVisible ? 1 : 0);
+  };
+  const loadFullImageFallback = () => {
+    if (state.imageFallback) return;
+    state.imageFallback = true;
+    state.viewer?.destroy();
+    state.viewer = null;
+    wrap.classList.remove('has-tiled-image');
+    const image = new Image();
+    image.onload = () => { state.rasters.image = image; draw(); };
+    image.onerror = () => setMessage('Could not load tissue image.', true);
+    image.src = `/api/spatial/${datasetId}/image/`;
+  };
+  const openTiledImage = () => {
+    if (state.viewer || state.rasters.image || state.imageFallback) return;
+    if (!window.OpenSeadragon) { loadFullImageFallback(); return; }
+    wrap.classList.add('has-tiled-image');
+    state.viewer = OpenSeadragon({
+      element: $('#tiled-image-viewer'),
+      showNavigationControl: false,
+      showNavigator: false,
+      animationTime: .2,
+      blendTime: 0,
+      minZoomImageRatio: .35,
+      maxZoomPixelRatio: 8,
+      visibilityRatio: .1,
+      gestureSettingsMouse: {clickToZoom: false, dblClickToZoom: false, scrollToZoom: true, dragToPan: true}
+    });
+    state.viewer.addHandler('open', () => {
+      updateImageVisibility();
+      fit();
+      setMessage('Tissue image tiles loaded');
+    });
+    state.viewer.addHandler('open-failed', loadFullImageFallback);
+    state.viewer.addHandler('animation', draw);
+    state.viewer.addHandler('zoom', () => {
+      state.view.scale = state.viewer.viewport.getZoom() / state.viewer.viewport.getHomeZoom();
+      draw();
+    });
+    state.viewer.addHandler('resize', resize);
+    state.viewer.addHandler('canvas-click', event => {
+      if (!event.quick) return;
+      const hit = nearestPoint(event.position.x, event.position.y);
+      if (hit.point && hit.distance < pointRadius() + 10) showSelection(hit.point);
+    });
+    state.viewer.addHandler('canvas-move', event => {
+      const x = event.position.x, y = event.position.y;
+      const coordinate = fromCanvas(x, y);
+      $('#coordinate-readout').textContent = `x ${coordinate.x.toFixed(1)} · y ${coordinate.y.toFixed(1)}`;
+      const hit = nearestPoint(x, y);
+      if (hit.point && hit.distance < pointRadius() + 10) {
+        $('#tooltip').hidden = false;
+        $('#tooltip').style.left = `${x + 14}px`;
+        $('#tooltip').style.top = `${y + 14}px`;
+        $('#tooltip').textContent = `${hit.point.id} · ${displayLabel(hit.point)}`;
+      } else $('#tooltip').hidden = true;
+    });
+    state.viewer.open(`/api/spatial/${datasetId}/image.dzi`);
+  };
   const loadRaster = (layerId) => {
+    if (layerId === 'image') {
+      if (state.viewer || state.rasters.image || state.imageFallback || state.osdLoadStarted) return;
+      if (!window.OpenSeadragon) {
+        state.osdLoadStarted = true;
+        const script = document.createElement('script');
+        script.src = 'https://cdnjs.cloudflare.com/ajax/libs/openseadragon/5.0.1/openseadragon.min.js';
+        script.async = true;
+        script.onload = () => window.OpenSeadragon ? openTiledImage() : loadFullImageFallback();
+        script.onerror = loadFullImageFallback;
+        document.head.append(script);
+        return;
+      }
+      openTiledImage();
+      return;
+    }
     if (state.rasters[layerId]) return;
-    const endpoint = layerId === 'tissue_mask' ? 'mask' : 'image';
     const image = new Image();
     image.onload = () => { state.rasters[layerId] = image; draw(); };
     image.onerror = () => setMessage(`Could not load ${layerId}.`, true);
-    image.src = `/api/spatial/${datasetId}/${endpoint}/`;
+    image.src = `/api/spatial/${datasetId}/mask/`;
   };
   const displayLabel = (point) => {
     const candidates = [point.annotation, point.cluster, point.id].filter(value => value !== undefined && value !== null && `${value}`.trim() !== '');
@@ -110,8 +199,11 @@
     const width = wrap.clientWidth, height = wrap.clientHeight;
     context.clearRect(0, 0, width, height);
     context.save();
-    const origin = toCanvas({x: 0, y: 0}), imageWidth = state.metadata.width * scaleValue(), imageHeight = state.metadata.height * scaleValue();
-    if (layerEnabled('image') && state.rasters.image) context.drawImage(state.rasters.image, origin.x, origin.y, imageWidth, imageHeight);
+    const fallbackScale = Math.min(width / state.metadata.width, height / state.metadata.height) * state.view.scale;
+    state.transform = state.viewer?.world?.getItemCount() ? viewerTransform() : {x: state.view.x, y: state.view.y, scaleX: fallbackScale, scaleY: fallbackScale};
+    const origin = {x: state.transform.x, y: state.transform.y};
+    const imageWidth = state.metadata.width * state.transform.scaleX, imageHeight = state.metadata.height * state.transform.scaleY;
+    if (layerEnabled('image') && !state.viewer && state.rasters.image) context.drawImage(state.rasters.image, origin.x, origin.y, imageWidth, imageHeight);
     if (layerEnabled('tissue_mask') && state.rasters.tissue_mask) { context.globalAlpha = state.opacity; context.drawImage(state.rasters.tissue_mask, origin.x, origin.y, imageWidth, imageHeight); }
     if (state.metadata.synthetic && layerEnabled('coordinates')) {
       context.globalAlpha = .23; context.strokeStyle = '#59c4bd'; context.lineWidth = 1;
@@ -144,7 +236,16 @@
     const fraction = normalized < .5 ? normalized * 2 : (normalized - .5) * 2;
     return `rgb(${start.map((channel, index) => Math.round(channel + (end[index] - channel) * fraction)).join(', ')})`;
   };
-  const fit = () => { if (!state.metadata) return; state.view.scale = 1; state.view.x = (wrap.clientWidth - state.metadata.width * scaleValue()) / 2; state.view.y = (wrap.clientHeight - state.metadata.height * scaleValue()) / 2; draw(); };
+  const fit = () => {
+    if (!state.metadata) return;
+    state.view.scale = 1;
+    if (state.viewer?.world?.getItemCount()) state.viewer.viewport.goHome(true);
+    else {
+      state.view.x = (wrap.clientWidth - state.metadata.width * scaleValue()) / 2;
+      state.view.y = (wrap.clientHeight - state.metadata.height * scaleValue()) / 2;
+    }
+    draw();
+  };
   const showSelection = (point) => {
     state.selected = point;
     const label = displayLabel(point);
@@ -172,8 +273,9 @@
       availability.dataset.state = !layer.available ? 'unavailable' : layer.renderable === false ? 'not-rendered' : input.checked ? 'on' : 'off';
       if (layer.renderable === false) row.title = 'This dataset layer is present but is not rendered by this viewer yet.';
       row.append(input, name, availability);
-      input.addEventListener('change', () => { syncLayerStatus(input); if (input.checked && ['image', 'tissue_mask'].includes(layer.id)) loadRaster(layer.id); if (input.checked && layer.id === 'expression') loadOverallExpression(); draw(); });
+      input.addEventListener('change', () => { syncLayerStatus(input); if (layer.id === 'image') { state.imageVisible = input.checked; if (input.checked) loadRaster(layer.id); updateImageVisibility(); } if (input.checked && layer.id === 'tissue_mask') loadRaster(layer.id); if (input.checked && layer.id === 'expression') loadOverallExpression(); draw(); });
       container.append(row);
+      if (layer.id === 'image') state.imageVisible = input.checked;
       if (input.checked && layer.id === 'image') loadRaster('image');
     });
   };

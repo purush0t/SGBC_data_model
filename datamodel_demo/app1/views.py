@@ -9,7 +9,7 @@ from django.template.loader import render_to_string
 from math import isfinite
 
 from .models import Activity, ActivityEntity, ActivityInformationRecord, Entity, EntityInformationRecord
-from .spatial import MAX_POINTS, SpatialDataError, get_reader, list_datasets
+from .spatial import IMAGE_TILE_SIZE, MAX_POINTS, SpatialDataError, SpatialDataZarrReader, get_reader, list_datasets
 
 
 def _timeline_rows(entity_page):
@@ -191,6 +191,41 @@ def _spatial_image(request, dataset_id, layer):
 
 def spatial_image(request, dataset_id):
     return _spatial_image(request, dataset_id, "image")
+
+
+def spatial_image_dzi(request, dataset_id):
+    reader = _spatial_reader(dataset_id)
+    if isinstance(reader, tuple):
+        return reader[1]
+    if not isinstance(reader, SpatialDataZarrReader):
+        return JsonResponse({"error": "Tiled images are unavailable for this dataset."}, status=404)
+    try:
+        width, height = reader.get_image_dimensions()
+    except SpatialDataError as error:
+        return JsonResponse({"error": str(error)}, status=503)
+    response = HttpResponse(
+        f'<Image TileSize="{IMAGE_TILE_SIZE}" Overlap="0" Format="jpg" '
+        'xmlns="http://schemas.microsoft.com/deepzoom/2008">'
+        f'<Size Width="{width}" Height="{height}"/></Image>',
+        content_type="application/xml",
+    )
+    response["Cache-Control"] = "public, max-age=3600"
+    return response
+
+
+def spatial_image_tile(request, dataset_id, level, column, row):
+    reader = _spatial_reader(dataset_id)
+    if isinstance(reader, tuple):
+        return reader[1]
+    if not isinstance(reader, SpatialDataZarrReader):
+        return JsonResponse({"error": "Tiled images are unavailable for this dataset."}, status=404)
+    try:
+        tile = reader.get_image_tile(level, column, row)
+    except SpatialDataError as error:
+        return JsonResponse({"error": str(error)}, status=404)
+    response = HttpResponse(tile, content_type="image/jpeg")
+    response["Cache-Control"] = "public, max-age=3600"
+    return response
 
 
 def spatial_mask(request, dataset_id):
