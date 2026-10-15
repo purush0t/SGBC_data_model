@@ -26,6 +26,8 @@ from app1.views import (
     spatial_datasets,
     spatial_expression,
     spatial_image,
+    spatial_image_dzi,
+    spatial_image_tile,
     spatial_mask,
     spatial_metadata,
     spatial_viewer,
@@ -52,5 +54,11 @@ urlpatterns = [
     path("api/spatial/<slug:dataset_id>/coordinates/", spatial_coordinates, name="spatial-coordinates"),
     path("api/spatial/<slug:dataset_id>/expression/", spatial_expression, name="spatial-expression"),
     path("api/spatial/<slug:dataset_id>/image/", spatial_image, name="spatial-image"),
+    path("api/spatial/<slug:dataset_id>/image.dzi", spatial_image_dzi, name="spatial-image-dzi"),
+    path(
+        "api/spatial/<slug:dataset_id>/image_files/<int:level>/<int:column>_<int:row>.jpg",
+        spatial_image_tile,
+        name="spatial-image-tile",
+    ),
     path("api/spatial/<slug:dataset_id>/mask/", spatial_mask, name="spatial-mask"),
 ]

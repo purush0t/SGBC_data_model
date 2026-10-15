@@ -42,10 +42,10 @@
     </aside>
     <section class="canvas-panel">
       <div class="canvas-toolbar"><button id="fit-view" title="Fit all points">Fit view</button><button id="reset-view" title="Reset view">Reset</button><span id="canvas-state" class="muted">Preparing canvas</span></div>
-      <div id="canvas-wrap" class="canvas-wrap"><canvas id="spatial-canvas"></canvas><div id="empty-state" class="empty-state">Loading spatial coordinates...</div><div id="tooltip" class="tooltip" hidden></div></div>
+      <div id="canvas-wrap" class="canvas-wrap"><div id="tiled-image-viewer" aria-label="Tiled tissue image"></div><canvas id="spatial-canvas"></canvas><div id="empty-state" class="empty-state">Loading spatial coordinates...</div><div id="tooltip" class="tooltip" hidden></div></div>
       <div class="canvas-footer"><span id="coordinate-readout">x -- · y --</span><span id="selection-readout">No cell selected</span></div>
     </section>
   </main>
-  <script src="{% static 'app1/spatial/spatial-viewer.js' %}?v=expression-overlay-20260926"></script>
+  <script src="{% static 'app1/spatial/spatial-viewer.js' %}?v=deepzoom-20261015"></script>
 </body>
 </html>

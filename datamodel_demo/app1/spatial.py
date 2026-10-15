@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from functools import cached_property
 from io import BytesIO
-from math import exp
+from math import ceil, exp, log2
 import os
 from pathlib import Path
 import re
@@ -16,6 +16,7 @@ import numpy as np
 
 MAX_POINTS = 50_000
 MAX_IMAGE_DIMENSION = 4096
+IMAGE_TILE_SIZE = 256
 
 
 class SpatialDataError(ValueError):
@@ -225,6 +226,71 @@ class SpatialDataZarrReader(SpatialDatasetReader):
             self._image_rasters,
             key=lambda raster: raster.sizes["x"] * raster.sizes["y"],
         )
+
+    @cached_property
+    def _image_intensity_range(self):
+        raster = self._image_raster
+        sample = raster.isel(x=slice(None, None, 16), y=slice(None, None, 16))
+        axes = ["y", "x"] + (["c"] if "c" in sample.dims else [])
+        data = sample.transpose(*axes).data
+        pixels = data.compute() if hasattr(data, "compute") else np.asarray(data)
+        if pixels.dtype == np.uint8:
+            return None
+        if pixels.ndim == 2:
+            low, high = np.percentile(pixels, (1, 99))
+        else:
+            low, high = np.percentile(pixels, (1, 99), axis=(0, 1), keepdims=True)
+        return low, high
+
+    def get_image_dimensions(self) -> tuple[int, int]:
+        raster = self._image_raster
+        if raster is None:
+            raise SpatialDataError("The tissue image is unavailable.")
+        return int(raster.sizes["x"]), int(raster.sizes["y"])
+
+    def get_image_tile(self, level: int, column: int, row: int) -> bytes:
+        from PIL import Image
+
+        raster = self._image_raster
+        if raster is None:
+            raise SpatialDataError("The tissue image is unavailable.")
+        width, height = self.get_image_dimensions()
+        max_level = ceil(log2(max(width, height)))
+        if level < 0 or level > max_level or column < 0 or row < 0:
+            raise SpatialDataError("The requested image tile is outside the image pyramid.")
+
+        downsample = 2 ** (max_level - level)
+        level_width = ceil(width / downsample)
+        level_height = ceil(height / downsample)
+        left = column * IMAGE_TILE_SIZE
+        top = row * IMAGE_TILE_SIZE
+        if left >= level_width or top >= level_height:
+            raise SpatialDataError("The requested image tile is outside the image pyramid.")
+        tile_width = min(IMAGE_TILE_SIZE, level_width - left)
+        tile_height = min(IMAGE_TILE_SIZE, level_height - top)
+        source_left = left * downsample
+        source_top = top * downsample
+        source_right = min(width, (left + tile_width) * downsample)
+        source_bottom = min(height, (top + tile_height) * downsample)
+        tile = raster.isel(
+            x=slice(source_left, source_right, downsample),
+            y=slice(source_top, source_bottom, downsample),
+        )
+        axes = ["y", "x"] + (["c"] if "c" in tile.dims else [])
+        data = tile.transpose(*axes).data
+        pixels = data.compute() if hasattr(data, "compute") else np.asarray(data)
+        if "c" in tile.dims and pixels.shape[-1] == 1:
+            pixels = pixels[..., 0]
+        if pixels.dtype != np.uint8:
+            low, high = self._image_intensity_range
+            pixels = np.clip((pixels.astype(np.float32) - low) * (255 / np.maximum(high - low, 1)), 0, 255)
+            pixels = pixels.astype(np.uint8)
+        image = Image.fromarray(pixels).convert("RGB")
+        if image.size != (tile_width, tile_height):
+            image = image.resize((tile_width, tile_height), Image.Resampling.LANCZOS)
+        output = BytesIO()
+        image.save(output, format="JPEG", quality=85, optimize=True)
+        return output.getvalue()
 
     @staticmethod
     def _string_value(value) -> str | None:

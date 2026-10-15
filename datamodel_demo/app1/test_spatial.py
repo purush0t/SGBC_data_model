@@ -1,11 +1,15 @@
+from io import BytesIO
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
+import numpy as np
 from django.test import TestCase
+from PIL import Image
+from xarray import DataArray
 
 from .models import Entity, EntityInformationRecord, EntityType, InformationRecordType
-from .spatial import _spatial_dimensions, get_reader
+from .spatial import SpatialDataZarrReader, _spatial_dimensions, get_reader
 
 
 class SpatialApiTests(TestCase):
@@ -57,6 +61,29 @@ class SpatialApiTests(TestCase):
         mask = type("Mask", (), {"shape": (6432, 6432)})()
 
         self.assertEqual(_spatial_dimensions(image, mask), (1608, 1608))
+
+    def test_deep_zoom_image_descriptor_and_edge_tile(self):
+        reader = SpatialDataZarrReader(
+            "tile-test", Path("unused.zarr"), "Tile test", "", "", ""
+        )
+        reader.__dict__["_image_raster"] = DataArray(
+            np.arange(300 * 260, dtype=np.uint16).reshape(260, 300),
+            dims=("y", "x"),
+        )
+        with patch("app1.views.get_reader", return_value=reader):
+            descriptor = self.client.get("/api/spatial/tile-test/image.dzi")
+            edge_tile = self.client.get("/api/spatial/tile-test/image_files/9/1_1.jpg")
+            overview_tile = self.client.get("/api/spatial/tile-test/image_files/0/0_0.jpg")
+            invalid_tile = self.client.get("/api/spatial/tile-test/image_files/9/2_0.jpg")
+
+        self.assertEqual(descriptor.status_code, 200)
+        self.assertIn('Width="300" Height="260"', descriptor.content.decode())
+        self.assertEqual(edge_tile.status_code, 200)
+        with Image.open(BytesIO(edge_tile.content)) as image:
+            self.assertEqual(image.size, (44, 4))
+        with Image.open(BytesIO(overview_tile.content)) as image:
+            self.assertEqual(image.size, (1, 1))
+        self.assertEqual(invalid_tile.status_code, 404)
 
     def test_mouse_liver_demo_is_available_and_capable(self):
         response = self.client.get("/api/spatial/mouse_liver_demo/metadata/")
