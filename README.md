@@ -81,15 +81,20 @@ them in the dataset selector; a directory named `test_out.zarr` is opened at
 `/spatial/test_out/`. The STOmics converter defaults to this directory and names
 its output from the cell-bin GEF unless `--dataset-id` or `--output` is supplied.
 
-The API uses bounded, gene-targeted responses rather than sending the expression
-matrix to the browser:
+The API serves viewport-bounded cell and gene data rather than sending the
+expression matrix to the browser. Dense views return a deterministic sample of
+up to 10,000 cells and include the total visible count; zooming in loads more
+detail. Deep Zoom tiles are rendered from the closest matching stored image
+pyramid level, while selected-cell counts are fetched on demand:
 
 ```text
 /api/spatial/
 /api/spatial/<dataset_id>/metadata/
 /api/spatial/<dataset_id>/coordinates/?xmin=...&xmax=...&ymin=...&ymax=...
 /api/spatial/<dataset_id>/expression/?gene=Gene_0&limit=50000
+/api/spatial/<dataset_id>/cell/?id=<cell_id>
 /api/spatial/<dataset_id>/image/
+/api/spatial/<dataset_id>/image.dzi
 /api/spatial/<dataset_id>/mask/
 ```
 

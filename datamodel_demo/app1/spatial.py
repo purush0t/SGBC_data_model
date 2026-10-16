@@ -62,13 +62,19 @@ class SpatialDatasetReader:
     def get_metadata(self) -> dict:
         raise NotImplementedError
 
-    def get_coordinates(self, *, bounds: dict | None = None, limit: int = MAX_POINTS, offset: int = 0) -> list[dict]:
+    def get_coordinates(self, *, bounds: dict | None = None, limit: int = MAX_POINTS, offset: int = 0, sample: bool = False) -> list[dict]:
         raise NotImplementedError
 
-    def get_expression(self, gene: str, *, bounds: dict | None = None, limit: int = MAX_POINTS, offset: int = 0) -> list[dict]:
+    def get_expression(self, gene: str, *, bounds: dict | None = None, limit: int = MAX_POINTS, offset: int = 0, sample: bool = False) -> list[dict]:
         raise NotImplementedError
 
-    def get_overall_expression(self, *, bounds: dict | None = None, limit: int = MAX_POINTS, offset: int = 0) -> list[dict]:
+    def get_overall_expression(self, *, bounds: dict | None = None, limit: int = MAX_POINTS, offset: int = 0, sample: bool = False) -> list[dict]:
+        raise NotImplementedError
+
+    def get_cell_details(self, cell_id: str) -> dict:
+        raise NotImplementedError
+
+    def get_coordinate_count(self, bounds: dict | None = None) -> int:
         raise NotImplementedError
 
 
@@ -126,10 +132,10 @@ class SyntheticSpatialDatasetReader(SpatialDatasetReader):
                     })
         return points[offset:offset + limit]
 
-    def get_coordinates(self, *, bounds: dict | None = None, limit: int = MAX_POINTS, offset: int = 0) -> list[dict]:
+    def get_coordinates(self, *, bounds: dict | None = None, limit: int = MAX_POINTS, offset: int = 0, sample: bool = False) -> list[dict]:
         return self._points(bounds, limit, offset)
 
-    def get_expression(self, gene: str, *, bounds: dict | None = None, limit: int = MAX_POINTS, offset: int = 0) -> list[dict]:
+    def get_expression(self, gene: str, *, bounds: dict | None = None, limit: int = MAX_POINTS, offset: int = 0, sample: bool = False) -> list[dict]:
         if gene not in self.genes:
             raise SpatialDataError(f"Gene {gene!r} was not found in this dataset.")
         gene_index = self.genes.index(gene)
@@ -142,12 +148,21 @@ class SyntheticSpatialDatasetReader(SpatialDatasetReader):
             values.append({**point, "value": round(value, 4), "scale": "synthetic raw counts"})
         return values
 
-    def get_overall_expression(self, *, bounds: dict | None = None, limit: int = MAX_POINTS, offset: int = 0) -> list[dict]:
+    def get_overall_expression(self, *, bounds: dict | None = None, limit: int = MAX_POINTS, offset: int = 0, sample: bool = False) -> list[dict]:
         points = self._points(bounds, limit, offset)
         return [{**point, "value": round(sum(
             2.0 + (8.0 if abs((point["x"] // 10 + point["y"] // 10) % 3 - index % 3) == 0 else 1.5)
             * exp(-((index % 10) / 9)) for index in range(len(self.genes))
         ), 4), "scale": "synthetic total counts"} for point in points]
+
+    def get_cell_details(self, cell_id: str) -> dict:
+        for point in self._points(None, MAX_POINTS, 0):
+            if point["id"] == cell_id:
+                return point
+        raise SpatialDataError(f"Cell {cell_id!r} was not found in this dataset.")
+
+    def get_coordinate_count(self, bounds: dict | None = None) -> int:
+        return len(self._points(bounds, MAX_POINTS, 0))
 
 
 def _mouse_liver_path() -> Path:
@@ -216,6 +231,15 @@ class SpatialDataZarrReader(SpatialDatasetReader):
 
     @cached_property
     def _image_raster(self):
+        if not self._image_rasters:
+            return None
+        return max(
+            self._image_rasters,
+            key=lambda raster: raster.sizes["x"] * raster.sizes["y"],
+        )
+
+    @cached_property
+    def _display_image_raster(self):
         return _select_display_raster(self._image_rasters)
 
     @cached_property
@@ -268,23 +292,37 @@ class SpatialDataZarrReader(SpatialDatasetReader):
             raise SpatialDataError("The requested image tile is outside the image pyramid.")
         tile_width = min(IMAGE_TILE_SIZE, level_width - left)
         tile_height = min(IMAGE_TILE_SIZE, level_height - top)
-        source_left = left * downsample
-        source_top = top * downsample
-        source_right = min(width, (left + tile_width) * downsample)
-        source_bottom = min(height, (top + tile_height) * downsample)
+
+        source_rasters = [
+            candidate for candidate in self._image_rasters
+            if candidate.sizes["x"] >= level_width and candidate.sizes["y"] >= level_height
+        ]
+        if source_rasters:
+            raster = min(
+                source_rasters,
+                key=lambda candidate: candidate.sizes["x"] * candidate.sizes["y"],
+            )
+        source_width, source_height = int(raster.sizes["x"]), int(raster.sizes["y"])
+        scale_x, scale_y = width / source_width, height / source_height
+        step_x = max(1, round(downsample / scale_x))
+        step_y = max(1, round(downsample / scale_y))
+        source_left = round(left * source_width / level_width)
+        source_top = round(top * source_height / level_height)
+        source_right = ceil((left + tile_width) * source_width / level_width)
+        source_bottom = ceil((top + tile_height) * source_height / level_height)
         tile = raster.isel(
-            x=slice(source_left, source_right, downsample),
-            y=slice(source_top, source_bottom, downsample),
+            x=slice(source_left, source_right, step_x),
+            y=slice(source_top, source_bottom, step_y),
         )
         axes = ["y", "x"] + (["c"] if "c" in tile.dims else [])
         data = tile.transpose(*axes).data
         pixels = data.compute() if hasattr(data, "compute") else np.asarray(data)
-        if "c" in tile.dims and pixels.shape[-1] == 1:
-            pixels = pixels[..., 0]
         if pixels.dtype != np.uint8:
             low, high = self._image_intensity_range
             pixels = np.clip((pixels.astype(np.float32) - low) * (255 / np.maximum(high - low, 1)), 0, 255)
             pixels = pixels.astype(np.uint8)
+        if "c" in tile.dims and pixels.shape[-1] == 1:
+            pixels = pixels[..., 0]
         image = Image.fromarray(pixels).convert("RGB")
         if image.size != (tile_width, tile_height):
             image = image.resize((tile_width, tile_height), Image.Resampling.LANCZOS)
@@ -383,7 +421,7 @@ class SpatialDataZarrReader(SpatialDatasetReader):
         return target
 
     @cached_property
-    def _cells(self):
+    def _cell_data(self):
         table = self._table
         coordinates = np.asarray(table.obsm["spatial"])
         if self._image_reference_raster is not None and self._image_raster is not None:
@@ -392,29 +430,67 @@ class SpatialDataZarrReader(SpatialDatasetReader):
                 self._image_reference_raster,
                 self._image_raster,
             )
-        matrix = table.X.tocsr() if hasattr(table.X, "tocsr") else np.asarray(table.X)
-        if hasattr(matrix, "tocsr"):
-            detected = np.asarray((matrix > 0).sum(axis=1)).reshape(-1)
-            totals = np.asarray(matrix.sum(axis=1)).reshape(-1)
-        else:
-            detected = np.count_nonzero(matrix, axis=1)
-            totals = matrix.sum(axis=1)
-        cells = []
+        cell_ids, annotations, clusters = [], [], []
         for index, observation in table.obs.reset_index(drop=True).iterrows():
-            annotation = self._annotation_value(observation.to_dict())
-            cluster = self._cluster_value(observation.to_dict())
+            values = observation.to_dict()
+            annotation = self._annotation_value(values)
+            cluster = self._cluster_value(values)
             if annotation is None and cluster is not None:
                 annotation = cluster
-            cells.append({
-                "id": str(observation["cell_ID"]),
-                "x": float(coordinates[index, 0]),
-                "y": float(coordinates[index, 1]),
-                "annotation": annotation,
-                "cluster": cluster if cluster and cluster != annotation else None,
-                "genes_detected": int(detected[index]),
-                "total_counts": int(totals[index]),
-            })
-        return cells
+            cell_ids.append(str(values["cell_ID"]))
+            annotations.append(annotation)
+            clusters.append(cluster if cluster and cluster != annotation else None)
+        return {
+            "id": np.asarray(cell_ids, dtype=object),
+            "x": np.asarray(coordinates[:, 0], dtype=np.float64),
+            "y": np.asarray(coordinates[:, 1], dtype=np.float64),
+            "annotation": annotations,
+            "cluster": clusters,
+        }
+
+    @cached_property
+    def _cell_x_order(self):
+        order = np.argsort(self._cell_data["x"], kind="stable")
+        return self._cell_data["x"][order], order
+
+    @cached_property
+    def _cell_index_by_id(self):
+        return {cell_id: index for index, cell_id in enumerate(self._cell_data["id"])}
+
+    def _matching_indices(self, bounds: dict | None) -> np.ndarray:
+        data = self._cell_data
+        if not bounds:
+            return np.arange(len(data["id"]))
+        sorted_x, order = self._cell_x_order
+        first = np.searchsorted(sorted_x, bounds["xmin"], side="left")
+        last = np.searchsorted(sorted_x, bounds["xmax"], side="right")
+        indices = order[first:last]
+        visible = (data["y"][indices] >= bounds["ymin"]) & (data["y"][indices] <= bounds["ymax"])
+        return np.sort(indices[visible], kind="stable")
+
+    def get_coordinate_count(self, bounds: dict | None = None) -> int:
+        self._validate_query(bounds, 1, 0)
+        return len(self._matching_indices(bounds))
+
+    def _selected_indices(self, bounds: dict | None, limit: int, offset: int, sample: bool = False) -> np.ndarray:
+        self._validate_query(bounds, limit, offset)
+        indices = self._matching_indices(bounds)
+        if sample and offset == 0 and len(indices) > limit:
+            return indices[np.linspace(0, len(indices) - 1, num=limit, dtype=np.int64)]
+        return indices[offset:offset + limit]
+
+    def _cell_records(self, indices: np.ndarray) -> list[dict]:
+        data = self._cell_data
+        return [
+            {
+                "id": str(data["id"][index]),
+                "x": float(data["x"][index]),
+                "y": float(data["y"][index]),
+                "annotation": data["annotation"][index],
+                "cluster": data["cluster"][index],
+            }
+            for index in indices
+        ]
 
     def get_metadata(self) -> dict:
         if not self.data_path.is_dir():
@@ -427,6 +503,8 @@ class SpatialDataZarrReader(SpatialDatasetReader):
                 "resolution": "Unavailable",
                 "width": 0,
                 "height": 0,
+                "display_width": 0,
+                "display_height": 0,
                 "n_bins": 0,
                 "n_genes": 0,
                 "genes": [],
@@ -450,6 +528,9 @@ class SpatialDataZarrReader(SpatialDatasetReader):
         segmentation = data.labels.get("segmentation_mask")
         table = self._table
         height, width = _spatial_dimensions(self._image_raster, segmentation)
+        display_raster = self._display_image_raster
+        display_width = int(display_raster.sizes["x"]) if display_raster is not None else 0
+        display_height = int(display_raster.sizes["y"]) if display_raster is not None else 0
         available = {
             "coordinates": True,
             "image": image is not None,
@@ -493,6 +574,8 @@ class SpatialDataZarrReader(SpatialDatasetReader):
             "resolution": f"{width} × {height} pixels",
             "width": int(width),
             "height": int(height),
+            "display_width": display_width,
+            "display_height": display_height,
             "n_bins": int(table.n_obs),
             "n_genes": int(table.n_vars),
             "genes": [str(gene) for gene in table.var_names],
@@ -515,7 +598,7 @@ class SpatialDataZarrReader(SpatialDatasetReader):
     def _image_png(self) -> bytes:
         from PIL import Image
 
-        image = self._image_raster
+        image = self._display_image_raster
         if image is None:
             raise SpatialDataError("The tissue image is unavailable.")
         pixels = image.data.compute()
@@ -569,41 +652,60 @@ class SpatialDataZarrReader(SpatialDatasetReader):
         if bounds and (bounds["xmin"] > bounds["xmax"] or bounds["ymin"] > bounds["ymax"]):
             raise SpatialDataError("Minimum bounds must not exceed maximum bounds.")
 
-    def _selected_cells(self, bounds: dict | None, limit: int, offset: int) -> list[dict]:
-        self._validate_query(bounds, limit, offset)
-        cells = self._cells
-        if bounds:
-            cells = [
-                cell for cell in cells
-                if bounds["xmin"] <= cell["x"] <= bounds["xmax"]
-                and bounds["ymin"] <= cell["y"] <= bounds["ymax"]
-            ]
-        return cells[offset:offset + limit]
+    def get_coordinates(self, *, bounds: dict | None = None, limit: int = MAX_POINTS, offset: int = 0, sample: bool = False) -> list[dict]:
+        return self._cell_records(self._selected_indices(bounds, limit, offset, sample))
 
-    def get_coordinates(self, *, bounds: dict | None = None, limit: int = MAX_POINTS, offset: int = 0) -> list[dict]:
-        return self._selected_cells(bounds, limit, offset)
-
-    def get_expression(self, gene: str, *, bounds: dict | None = None, limit: int = MAX_POINTS, offset: int = 0) -> list[dict]:
+    def get_expression(self, gene: str, *, bounds: dict | None = None, limit: int = MAX_POINTS, offset: int = 0, sample: bool = False) -> list[dict]:
         self._validate_query(bounds, limit, offset)
         table = self._table
         gene = self._resolve_gene(gene)
         if gene not in table.var_names:
             raise SpatialDataError(f"Gene {gene!r} was not found in this dataset.")
-        cells = self._selected_cells(bounds, limit, offset)
-        index_by_id = {cell["id"]: index for index, cell in enumerate(self._cells)}
-        indices = [index_by_id[cell["id"]] for cell in cells]
+        indices = self._selected_indices(bounds, limit, offset, sample)
         column = table[indices, gene].X
         values = column.toarray().reshape(-1) if hasattr(column, "toarray") else np.asarray(column).reshape(-1)
         return [
-            {"id": cell["id"], "x": cell["x"], "y": cell["y"], "value": int(value)}
-            for cell, value in zip(cells, values)
+            {"id": str(self._cell_data["id"][index]), "x": float(self._cell_data["x"][index]), "y": float(self._cell_data["y"][index]), "value": int(value)}
+            for index, value in zip(indices, values)
         ]
 
-    def get_overall_expression(self, *, bounds: dict | None = None, limit: int = MAX_POINTS, offset: int = 0) -> list[dict]:
+    def get_overall_expression(self, *, bounds: dict | None = None, limit: int = MAX_POINTS, offset: int = 0, sample: bool = False) -> list[dict]:
+        indices = self._selected_indices(bounds, limit, offset, sample)
+        if not len(indices):
+            return []
+        matrix = self._table.X
+        rows = matrix[indices] if hasattr(matrix, "__getitem__") else np.asarray(matrix)[indices]
+        if hasattr(rows, "tocsr"):
+            rows = rows.tocsr()
+            totals = np.asarray(rows.sum(axis=1)).reshape(-1)
+        else:
+            rows = np.asarray(rows)
+            totals = rows.sum(axis=1)
         return [
-            {"id": cell["id"], "x": cell["x"], "y": cell["y"], "value": cell["total_counts"]}
-            for cell in self._selected_cells(bounds, limit, offset)
+            {
+                "id": str(self._cell_data["id"][index]),
+                "x": float(self._cell_data["x"][index]),
+                "y": float(self._cell_data["y"][index]),
+                "value": int(total),
+            }
+            for index, total in zip(indices, totals)
         ]
+
+    def get_cell_details(self, cell_id: str) -> dict:
+        index = self._cell_index_by_id.get(cell_id)
+        if index is None:
+            raise SpatialDataError(f"Cell {cell_id!r} was not found in this dataset.")
+        matrix = self._table.X
+        row = matrix.getrow(index) if hasattr(matrix, "getrow") else np.asarray(matrix[index]).reshape(-1)
+        if hasattr(row, "getnnz"):
+            genes_detected = int((row > 0).getnnz())
+            total_counts = int(row.sum())
+        else:
+            genes_detected = int(np.count_nonzero(row))
+            total_counts = int(np.sum(row))
+        details = self._cell_records(np.asarray([index]))[0]
+        details.update({"genes_detected": genes_detected, "total_counts": total_counts})
+        return details
 
 
 @dataclass(frozen=True)
@@ -616,13 +718,19 @@ class RegisteredSpatialDatasetReader(SpatialDatasetReader):
     def _unavailable(self):
         raise SpatialDataError("This dataset is registered, but no compatible spatial reader is available.")
 
-    def get_coordinates(self, *, bounds: dict | None = None, limit: int = MAX_POINTS, offset: int = 0) -> list[dict]:
+    def get_coordinates(self, *, bounds: dict | None = None, limit: int = MAX_POINTS, offset: int = 0, sample: bool = False) -> list[dict]:
         self._unavailable()
 
-    def get_expression(self, gene: str, *, bounds: dict | None = None, limit: int = MAX_POINTS, offset: int = 0) -> list[dict]:
+    def get_expression(self, gene: str, *, bounds: dict | None = None, limit: int = MAX_POINTS, offset: int = 0, sample: bool = False) -> list[dict]:
         self._unavailable()
 
-    def get_overall_expression(self, *, bounds: dict | None = None, limit: int = MAX_POINTS, offset: int = 0) -> list[dict]:
+    def get_overall_expression(self, *, bounds: dict | None = None, limit: int = MAX_POINTS, offset: int = 0, sample: bool = False) -> list[dict]:
+        self._unavailable()
+
+    def get_cell_details(self, cell_id: str) -> dict:
+        self._unavailable()
+
+    def get_coordinate_count(self, bounds: dict | None = None) -> int:
         self._unavailable()
 
 

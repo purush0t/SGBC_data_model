@@ -4,9 +4,10 @@
   const wrap = document.querySelector('#canvas-wrap');
   const context = canvas.getContext('2d');
   const state = {
-    metadata: null, points: [], coordinatesLoaded: false, nearestSpacing: null, expression: [], overallExpression: [], gene: null, selected: null,
+    metadata: null, points: [], nearestSpacing: null, expression: [], overallExpression: [], gene: null, selected: null,
     view: {x: 0, y: 0, scale: 1}, drag: null, bounds: {xmin: 0, xmax: 100, ymin: 0, ymax: 100},
-    rasters: {}, viewer: null, transform: null, imageVisible: true, opacity: .85, expressionRange: {min: 0, max: 1}
+    rasters: {}, viewer: null, transform: null, imageVisible: true, opacity: .85, expressionRange: {min: 0, max: 1},
+    viewportRequest: 0, selectionRequest: 0, viewportTimer: null, viewportSampled: false, viewportTotal: 0
   };
   const $ = (selector) => document.querySelector(selector);
   const api = (path) => fetch(`/api/spatial/${datasetId}/${path}`).then(async (response) => {
@@ -14,16 +15,6 @@
     if (!response.ok) throw new Error(data.error || 'Spatial request failed.');
     return data;
   });
-  const loadAllPages = async (pathForOffset) => {
-    const points = [];
-    let offset = 0;
-    while (true) {
-      const data = await api(pathForOffset(offset));
-      points.push(...data.points);
-      if (!data.has_more) return {points, scale: data.scale};
-      offset += data.count;
-    }
-  };
   const expressionRange = (points) => points.reduce(
     (range, point) => ({min: Math.min(range.min, point.value), max: Math.max(range.max, point.value)}),
     {min: Infinity, max: -Infinity}
@@ -68,6 +59,22 @@
     }
     return {x: (x - state.view.x) / scaleValue(), y: (y - state.view.y) / scaleValue()};
   };
+  const visibleBounds = () => {
+    const first = fromCanvas(0, 0), last = fromCanvas(wrap.clientWidth, wrap.clientHeight);
+    const paddingX = Math.abs(last.x - first.x) * .02, paddingY = Math.abs(last.y - first.y) * .02;
+    return {
+      xmin: Math.max(0, Math.min(first.x, last.x) - paddingX),
+      xmax: Math.min(state.metadata.width, Math.max(first.x, last.x) + paddingX),
+      ymin: Math.max(0, Math.min(first.y, last.y) - paddingY),
+      ymax: Math.min(state.metadata.height, Math.max(first.y, last.y) + paddingY)
+    };
+  };
+  const viewportPath = (path, bounds, extra = {}) => {
+    const params = new URLSearchParams({limit: '10000', sample: 'true'});
+    Object.entries(bounds).forEach(([key, value]) => params.set(key, value.toFixed(2)));
+    Object.entries(extra).forEach(([key, value]) => params.set(key, value));
+    return `${path}?${params}`;
+  };
   const viewerTransform = () => {
     const viewport = state.viewer.viewport;
     const toPixel = (x, y) => viewport.pixelFromPoint(viewport.imageToViewportCoordinates(x, y), true);
@@ -89,6 +96,10 @@
   };
   const loadFullImageFallback = () => {
     if (state.imageFallback) return;
+    if (state.metadata && state.metadata.display_width * state.metadata.display_height > 16000000) {
+      setMessage('Image tiles are unavailable; full-image fallback is disabled for this image size.', true);
+      return;
+    }
     state.imageFallback = true;
     state.viewer?.destroy();
     state.viewer = null;
@@ -123,10 +134,11 @@
       setMessage('Image tile failed; loading the full image instead.', true);
       loadFullImageFallback();
     });
-    state.viewer.addHandler('animation', draw);
+    state.viewer.addHandler('animation', () => { draw(); scheduleViewportLoad(); });
     state.viewer.addHandler('zoom', () => {
       state.view.scale = state.viewer.viewport.getZoom() / state.viewer.viewport.getHomeZoom();
       draw();
+      scheduleViewportLoad();
     });
     state.viewer.addHandler('resize', resize);
     state.viewer.addHandler('canvas-click', event => {
@@ -254,13 +266,23 @@
     state.selected = point;
     const label = displayLabel(point);
     $('#selection-readout').textContent = `${point.id} · ${label}`;
-    const details = [`Cell ID: ${point.id}`, `X: ${point.x.toFixed(1)}`, `Y: ${point.y.toFixed(1)}`];
-    if (point.annotation && !/^[-+]?((\d+\.?\d*)|(\.\d+))$/.test(`${point.annotation}`)) details.push(`Annotation: ${point.annotation}`);
-    if (point.cluster && !/^[-+]?((\d+\.?\d*)|(\.\d+))$/.test(`${point.cluster}`)) details.push(`Cluster: ${point.cluster}`);
-    if (point.genes_detected !== undefined) details.push(`Genes detected: ${point.genes_detected}`);
-    if (point.total_counts !== undefined) details.push(`Total counts: ${point.total_counts}`);
-    $('#selection-details').textContent = details.join('\n');
+    const request = ++state.selectionRequest;
+    const renderDetails = (cell) => {
+      const details = [`Cell ID: ${cell.id}`, `X: ${cell.x.toFixed(1)}`, `Y: ${cell.y.toFixed(1)}`];
+      if (cell.annotation && !/^[-+]?((\d+\.?\d*)|(\.\d+))$/.test(`${cell.annotation}`)) details.push(`Annotation: ${cell.annotation}`);
+      if (cell.cluster && !/^[-+]?((\d+\.?\d*)|(\.\d+))$/.test(`${cell.cluster}`)) details.push(`Cluster: ${cell.cluster}`);
+      if (cell.genes_detected !== undefined) details.push(`Genes detected: ${cell.genes_detected}`);
+      if (cell.total_counts !== undefined) details.push(`Total counts: ${cell.total_counts}`);
+      $('#selection-details').textContent = details.join('\n');
+    };
+    renderDetails(point);
     draw();
+    api(`cell/?id=${encodeURIComponent(point.id)}`).then(({cell}) => {
+      if (request !== state.selectionRequest || state.selected?.id !== point.id) return;
+      state.selected = {...point, ...cell};
+      renderDetails(state.selected);
+      draw();
+    }).catch(() => {});
   };
   const nearestPoint = (x, y) => state.points.reduce((nearest, point) => { const canvasPoint = toCanvas(point), distance = Math.hypot(canvasPoint.x - x, canvasPoint.y - y); return distance < nearest.distance ? {point, distance} : nearest; }, {point: null, distance: 16});
   const renderLayers = () => {
@@ -277,44 +299,74 @@
       availability.dataset.state = !layer.available ? 'unavailable' : layer.renderable === false ? 'not-rendered' : input.checked ? 'on' : 'off';
       if (layer.renderable === false) row.title = 'This dataset layer is present but is not rendered by this viewer yet.';
       row.append(input, name, availability);
-      input.addEventListener('change', () => { syncLayerStatus(input); if (layer.id === 'image') { state.imageVisible = input.checked; if (input.checked) loadRaster(layer.id); updateImageVisibility(); } if (input.checked && layer.id === 'tissue_mask') loadRaster(layer.id); if (input.checked && layer.id === 'expression') loadOverallExpression(); draw(); });
+      input.addEventListener('change', () => { syncLayerStatus(input); if (layer.id === 'image') { state.imageVisible = input.checked; if (input.checked) loadRaster(layer.id); updateImageVisibility(); } if (input.checked && layer.id === 'tissue_mask') loadRaster(layer.id); if (layer.id === 'expression') scheduleViewportLoad(); draw(); });
       container.append(row);
       if (layer.id === 'image') state.imageVisible = input.checked;
       if (input.checked && layer.id === 'image') loadRaster('image');
     });
   };
-  const loadCoordinates = () => loadAllPages(offset => `coordinates/?limit=50000&offset=${offset}`).then(data => { state.points = data.points; state.coordinatesLoaded = true; state.nearestSpacing = estimateNearestSpacing(data.points); if (state.metadata) { $('#empty-state').classList.add('is-hidden'); setMessage(`${data.points.length} cells loaded`); fit(); } }).catch(error => { $('#empty-state').textContent = error.message; setMessage(error.message, true); });
+  const loadViewport = async () => {
+    if (!state.metadata) return;
+    const request = ++state.viewportRequest;
+    const bounds = visibleBounds();
+    try {
+      const coordinates = await api(viewportPath('coordinates/', bounds));
+      if (request !== state.viewportRequest) return;
+      state.points = coordinates.points;
+      state.viewportSampled = coordinates.sampled;
+      state.viewportTotal = coordinates.total_count ?? coordinates.count;
+      state.nearestSpacing = estimateNearestSpacing(state.points);
+      $('#empty-state').classList.add('is-hidden');
+      const overallMode = layerEnabled('expression');
+      const expressionPath = overallMode
+        ? viewportPath('expression/', bounds, {overall: 'true'})
+        : state.gene ? viewportPath('expression/', bounds, {gene: state.gene}) : null;
+      if (expressionPath) {
+        const expression = await api(expressionPath);
+        if (request !== state.viewportRequest) return;
+        if (overallMode) state.overallExpression = expression.points;
+        else state.expression = expression.points;
+        const range = expressionRange(expression.points);
+        state.expressionRange = {
+          min: Number.isFinite(range.min) ? range.min : 0,
+          max: Number.isFinite(range.max) ? range.max : 0
+        };
+        $('#expression-min').textContent = state.expressionRange.min;
+        $('#expression-max').textContent = state.expressionRange.max;
+        $('#gene-state').textContent = overallMode
+          ? `${expression.points.length.toLocaleString()} visible cells · overall expression`
+          : `${state.metadata.gene_display_names?.[state.gene] || state.gene} · ${expression.points.length.toLocaleString()} visible cells · ${expression.scale || 'raw counts'}`;
+      } else {
+        state.expression = [];
+        state.overallExpression = [];
+        $('#gene-state').textContent = state.gene
+          ? `${state.metadata.gene_display_names?.[state.gene] || state.gene} · zoom or pan to load visible values`
+          : 'Choose a gene to view raw counts.';
+      }
+      setMessage(state.viewportSampled
+        ? `Displaying ${state.points.length.toLocaleString()} of ${state.viewportTotal.toLocaleString()} visible cells (sampled)`
+        : `${state.points.length.toLocaleString()} visible cells`);
+      draw();
+    } catch (error) {
+      if (request !== state.viewportRequest) return;
+      $('#empty-state').textContent = error.message;
+      setMessage(error.message, true);
+    }
+  };
+  const scheduleViewportLoad = () => {
+    clearTimeout(state.viewportTimer);
+    state.viewportTimer = setTimeout(loadViewport, 140);
+  };
   const loadExpression = () => {
     const rawGene = $('#gene-search').value.trim(); if (!rawGene) return;
     const gene = resolveGeneQuery(rawGene);
+    state.gene = gene;
     $('#gene-state').textContent = `Loading ${gene}...`;
-    loadAllPages(offset => `expression/?gene=${encodeURIComponent(gene)}&limit=50000&offset=${offset}`).then(data => {
-      const range = expressionRange(data.points);
-      const minimum = Number.isFinite(range.min) ? range.min : 0;
-      const maximum = Number.isFinite(range.max) ? range.max : 0;
-      state.gene = gene; state.expression = data.points; state.expressionRange = {min: minimum, max: maximum};
-      $('#expression-min').textContent = minimum; $('#expression-max').textContent = maximum;
-      const displayGene = state.metadata?.gene_display_names?.[gene] || gene;
-      $('#gene-state').textContent = `${displayGene} · ${data.points.length} cells · ${data.scale || 'raw counts'}`;
-      draw();
-    }).catch(error => {
-      state.expression = []; state.gene = null; $('#gene-state').textContent = error.message;
-      $('#expression-min').textContent = '0'; $('#expression-max').textContent = '0';
-      const expressionLayer = $('#layers input[data-layer="expression"]'); if (expressionLayer) { expressionLayer.checked = false; syncLayerStatus(expressionLayer); }
-      draw();
-    });
+    loadViewport();
   };
   const loadOverallExpression = () => {
     $('#gene-state').textContent = 'Loading overall expression...';
-    loadAllPages(offset => `expression/?overall=true&limit=50000&offset=${offset}`).then(data => {
-      const range = expressionRange(data.points);
-      const minimum = Number.isFinite(range.min) ? range.min : 0;
-      const maximum = Number.isFinite(range.max) ? range.max : 0;
-      state.overallExpression = data.points; state.expressionRange = {min: minimum, max: maximum};
-      $('#expression-min').textContent = minimum; $('#expression-max').textContent = maximum;
-      $('#gene-state').textContent = `${data.points.length} cells · overall expression`;
-      draw();
-    }).catch(error => { state.overallExpression = []; $('#gene-state').textContent = error.message; draw(); });
+    loadViewport();
   };
   const resolveGeneQuery = (gene) => {
     const query = gene.trim();
@@ -331,14 +383,15 @@
     $('#dataset-stats').innerHTML = `<dt>Cells</dt><dd>${metadata.n_bins}</dd><dt>Genes</dt><dd>${metadata.n_genes}</dd><dt>Species</dt><dd>${metadata.species}</dd><dt>Resolution</dt><dd>${metadata.resolution}</dd>`;
     const geneList = $('#gene-list'); const displayNames = metadata.gene_display_names || {}; geneList.replaceChildren(...metadata.genes.map(gene => { const option = document.createElement('option'); option.value = gene; option.textContent = displayNames[gene] || gene; return option; }));
     renderLayers();
-    if (state.coordinatesLoaded) { $('#empty-state').classList.add('is-hidden'); setMessage(`${state.points.length} cells loaded`); fit(); }
+    fit();
+    scheduleViewportLoad();
   }).catch(error => { $('#empty-state').textContent = error.message; setMessage(error.message, true); });
   $('#gene-submit').addEventListener('click', loadExpression); $('#gene-search').addEventListener('keydown', event => { if (event.key === 'Enter') loadExpression(); });
   $('#layer-opacity').addEventListener('input', event => { state.opacity = Number(event.target.value) / 100; $('#opacity-value').value = `${event.target.value}%`; draw(); });
   $('#fit-view').addEventListener('click', fit); $('#reset-view').addEventListener('click', () => { state.view = {x: 0, y: 0, scale: 1}; fit(); });
   canvas.addEventListener('pointerdown', event => { state.drag = {x: event.clientX, y: event.clientY, viewX: state.view.x, viewY: state.view.y}; wrap.classList.add('is-dragging'); canvas.setPointerCapture(event.pointerId); });
-  canvas.addEventListener('pointermove', event => { const rect = canvas.getBoundingClientRect(), localX = event.clientX - rect.left, localY = event.clientY - rect.top; const coordinate = fromCanvas(localX, localY); $('#coordinate-readout').textContent = `x ${coordinate.x.toFixed(1)} · y ${coordinate.y.toFixed(1)}`; if (state.drag) { state.view.x = state.drag.viewX + event.clientX - state.drag.x; state.view.y = state.drag.viewY + event.clientY - state.drag.y; draw(); } else { const hit = nearestPoint(localX, localY); if (hit.point && hit.distance < pointRadius() + 10) { $('#tooltip').hidden = false; $('#tooltip').style.left = `${localX + 14}px`; $('#tooltip').style.top = `${localY + 14}px`; $('#tooltip').textContent = `${hit.point.id} · ${displayLabel(hit.point)}`; } else $('#tooltip').hidden = true; } });
+  canvas.addEventListener('pointermove', event => { const rect = canvas.getBoundingClientRect(), localX = event.clientX - rect.left, localY = event.clientY - rect.top; const coordinate = fromCanvas(localX, localY); $('#coordinate-readout').textContent = `x ${coordinate.x.toFixed(1)} · y ${coordinate.y.toFixed(1)}`; if (state.drag) { state.view.x = state.drag.viewX + event.clientX - state.drag.x; state.view.y = state.drag.viewY + event.clientY - state.drag.y; draw(); scheduleViewportLoad(); } else { const hit = nearestPoint(localX, localY); if (hit.point && hit.distance < pointRadius() + 10) { $('#tooltip').hidden = false; $('#tooltip').style.left = `${localX + 14}px`; $('#tooltip').style.top = `${localY + 14}px`; $('#tooltip').textContent = `${hit.point.id} · ${displayLabel(hit.point)}`; } else $('#tooltip').hidden = true; } });
   canvas.addEventListener('pointerup', event => { if (state.drag) { const rect = canvas.getBoundingClientRect(), hit = nearestPoint(event.clientX - rect.left, event.clientY - rect.top); if (Math.hypot(event.clientX - state.drag.x, event.clientY - state.drag.y) < 5 && hit.point && hit.distance < pointRadius() + 10) showSelection(hit.point); } state.drag = null; wrap.classList.remove('is-dragging'); });
-  canvas.addEventListener('wheel', event => { event.preventDefault(); const rect = canvas.getBoundingClientRect(), before = fromCanvas(event.clientX - rect.left, event.clientY - rect.top); state.view.scale = Math.max(.35, Math.min(8, state.view.scale * (event.deltaY < 0 ? 1.12 : .89))); const after = toCanvas(before); state.view.x += event.clientX - rect.left - after.x; state.view.y += event.clientY - rect.top - after.y; draw(); }, {passive: false});
-  window.addEventListener('resize', resize); resize(); loadDatasetPicker(); loadMetadata(); loadCoordinates();
+  canvas.addEventListener('wheel', event => { event.preventDefault(); const rect = canvas.getBoundingClientRect(), before = fromCanvas(event.clientX - rect.left, event.clientY - rect.top); state.view.scale = Math.max(.35, Math.min(8, state.view.scale * (event.deltaY < 0 ? 1.12 : .89))); const after = toCanvas(before); state.view.x += event.clientX - rect.left - after.x; state.view.y += event.clientY - rect.top - after.y; draw(); scheduleViewportLoad(); }, {passive: false});
+  window.addEventListener('resize', () => { resize(); scheduleViewportLoad(); }); resize(); loadDatasetPicker(); loadMetadata();
 })();
