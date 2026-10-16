@@ -160,6 +160,16 @@
     });
     state.viewer.open(`/api/spatial/${datasetId}/image.dzi`);
   };
+  const startTiledImage = () => {
+    try {
+      openTiledImage();
+    } catch (error) {
+      setMessage(`Tiled viewer failed: ${error.message}`, true);
+      state.viewer?.destroy();
+      state.viewer = null;
+      loadFullImageFallback();
+    }
+  };
   const loadRaster = (layerId) => {
     if (layerId === 'image') {
       if (state.viewer || state.rasters.image || state.imageFallback || state.osdLoadStarted) return;
@@ -168,12 +178,12 @@
         const script = document.createElement('script');
         script.src = 'https://cdnjs.cloudflare.com/ajax/libs/openseadragon/5.0.1/openseadragon.min.js';
         script.async = true;
-        script.onload = () => window.OpenSeadragon ? openTiledImage() : loadFullImageFallback();
+        script.onload = () => window.OpenSeadragon ? startTiledImage() : loadFullImageFallback();
         script.onerror = loadFullImageFallback;
         document.head.append(script);
         return;
       }
-      openTiledImage();
+      startTiledImage();
       return;
     }
     if (state.rasters[layerId]) return;
@@ -230,7 +240,9 @@
     const overallExpressionById = new Map(state.overallExpression.map(point => [point.id, point]));
     if (showPoints) state.points.forEach(point => {
       const position = toCanvas(point);
-      const expression = layerEnabled('expression') ? overallExpressionById.get(point.id) : expressionById.get(point.id);
+      const expression = state.gene
+        ? expressionById.get(point.id)
+        : layerEnabled('expression') ? overallExpressionById.get(point.id) : null;
       const expressionVisible = Boolean(expression);
       const radius = expressionVisible ? pointRadius() : Math.max(2.8, pointRadius() * .72);
       context.beginPath(); context.arc(position.x, position.y, radius, 0, Math.PI * 2);
@@ -317,10 +329,10 @@
       state.viewportTotal = coordinates.total_count ?? coordinates.count;
       state.nearestSpacing = estimateNearestSpacing(state.points);
       $('#empty-state').classList.add('is-hidden');
-      const overallMode = layerEnabled('expression');
-      const expressionPath = overallMode
-        ? viewportPath('expression/', bounds, {overall: 'true'})
-        : state.gene ? viewportPath('expression/', bounds, {gene: state.gene}) : null;
+      const overallMode = layerEnabled('expression') && !state.gene;
+      const expressionPath = state.gene
+        ? viewportPath('expression/', bounds, {gene: state.gene})
+        : overallMode ? viewportPath('expression/', bounds, {overall: 'true'}) : null;
       if (expressionPath) {
         const expression = await api(expressionPath);
         if (request !== state.viewportRequest) return;
